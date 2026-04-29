@@ -122,6 +122,31 @@ class FileSummaryResponse(BaseModel):
     model: str | None = None
     updated_at: datetime | None = None
 
+class FileQuizGenerateRequest(BaseModel):
+    regenerate: bool = False
+    question_count: int = Field(default=5, ge=5, le=10)
+
+
+class QuizQuestionResponse(BaseModel):
+    id: UUID
+    prompt: str
+    options: list[str]
+    correct_option_index: int
+    explanation: str | None = None
+    position: int
+
+
+class FileQuizResponse(BaseModel):
+    state: Literal["empty", "pending", "completed", "failed"]
+    quiz_id: UUID | None = None
+    file_id: UUID
+    title: str | None = None
+    questions: list[QuizQuestionResponse] = Field(default_factory=list)
+    error_message: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    updated_at: datetime | None = None
+
 
 class AnnouncementAttachmentFileResponse(BaseModel):
     id: UUID

@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { ChevronDownIcon, CircleOffIcon, Link2Icon, Loader2Icon, PaperclipIcon, PlayCircleIcon, PlusIcon, UsersIcon } from "lucide-react";
@@ -25,6 +26,7 @@ import {
   type ClassroomAnnouncement,
   type ClassroomFile,
   type ClassroomMember,
+  type FileQuiz,
   type FileSummary,
 } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -32,6 +34,7 @@ import { useAuth } from "@/lib/auth/auth-provider";
 type AttachmentComposerType = "none" | "file" | "link" | "youtube";
 
 const PDF_PROCESSING_POLL_MS = 1500;
+type QuizResult = { score: number; total: number };
 
 function formatPostedAt(value: string): string {
   const date = new Date(value);
@@ -39,17 +42,6 @@ function formatPostedAt(value: string): string {
     return "";
   }
   return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-}
-
-function initialsFromName(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) {
-    return "U";
-  }
-  if (words.length === 1) {
-    return words[0].slice(0, 1).toUpperCase();
-  }
-  return `${words[0][0]}${words[1][0]}`.toUpperCase();
 }
 
 function getFileStatusLabel(attachment: ClassroomAnnouncement["attachment"]): string {
@@ -108,6 +100,11 @@ export default function ClassroomDetailPage() {
   const [summaryByFileId, setSummaryByFileId] = useState<Record<string, FileSummary>>({});
   const [isSummaryLoadingByFileId, setIsSummaryLoadingByFileId] = useState<Record<string, boolean>>({});
   const [isSummaryGeneratingByFileId, setIsSummaryGeneratingByFileId] = useState<Record<string, boolean>>({});
+  const [quizByFileId, setQuizByFileId] = useState<Record<string, FileQuiz>>({});
+  const [isQuizLoadingByFileId, setIsQuizLoadingByFileId] = useState<Record<string, boolean>>({});
+  const [isQuizGeneratingByFileId, setIsQuizGeneratingByFileId] = useState<Record<string, boolean>>({});
+  const [quizAnswersByFileId, setQuizAnswersByFileId] = useState<Record<string, Record<string, number>>>({});
+  const [quizResultsByFileId, setQuizResultsByFileId] = useState<Record<string, QuizResult>>({});
 
   const isCreator = classroom?.membership_role === "creator";
 
@@ -219,6 +216,34 @@ export default function ClassroomDetailPage() {
       }),
     );
   }, [announcements, summaryByFileId]);
+
+  useEffect(() => {
+    const quizFileIds = announcements
+      .filter(
+        (announcement) =>
+          announcement.attachment?.type === "file" &&
+          announcement.attachment.file?.content_type === "application/pdf" &&
+          announcement.attachment.file.processing_status === "completed",
+      )
+      .map((announcement) => announcement.attachment?.file?.id)
+      .filter((value): value is string => Boolean(value));
+
+    const missingFileIds = quizFileIds.filter((fileId) => quizByFileId[fileId] === undefined);
+    if (missingFileIds.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      missingFileIds.map(async (fileId) => {
+        try {
+          const quiz = await apiClient.getFileQuiz(fileId);
+          setQuizByFileId((previous) => ({ ...previous, [fileId]: quiz }));
+        } catch {
+          // Keep UI usable even if one quiz fetch fails.
+        }
+      }),
+    );
+  }, [announcements, quizByFileId]);
 
   const resetAnnouncementComposer = () => {
     setAnnouncementBody("");
@@ -353,6 +378,76 @@ export default function ClassroomDetailPage() {
     } finally {
       setIsSummaryGeneratingByFileId((previous) => ({ ...previous, [fileId]: false }));
     }
+  };
+
+  const handleLoadQuiz = async (fileId: string) => {
+    setIsQuizLoadingByFileId((previous) => ({ ...previous, [fileId]: true }));
+    try {
+      const quiz = await apiClient.getFileQuiz(fileId);
+      setQuizByFileId((previous) => ({ ...previous, [fileId]: quiz }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load quiz";
+      toast.error(message);
+    } finally {
+      setIsQuizLoadingByFileId((previous) => ({ ...previous, [fileId]: false }));
+    }
+  };
+
+  const handleGenerateQuiz = async (fileId: string, regenerate = false) => {
+    setIsQuizGeneratingByFileId((previous) => ({ ...previous, [fileId]: true }));
+    try {
+      const quiz = await apiClient.generateFileQuiz(fileId, { regenerate });
+      setQuizByFileId((previous) => ({ ...previous, [fileId]: quiz }));
+      setQuizAnswersByFileId((previous) => ({ ...previous, [fileId]: {} }));
+      setQuizResultsByFileId((previous) => {
+        const next = { ...previous };
+        delete next[fileId];
+        return next;
+      });
+      toast.success(regenerate ? "Quiz regenerated" : "Quiz generated");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not generate quiz";
+      toast.error(message);
+      await handleLoadQuiz(fileId);
+    } finally {
+      setIsQuizGeneratingByFileId((previous) => ({ ...previous, [fileId]: false }));
+    }
+  };
+
+  const handleSelectQuizOption = (fileId: string, questionId: string, optionIndex: number) => {
+    setQuizAnswersByFileId((previous) => ({
+      ...previous,
+      [fileId]: {
+        ...(previous[fileId] ?? {}),
+        [questionId]: optionIndex,
+      },
+    }));
+  };
+
+  const handleSubmitQuiz = (fileId: string) => {
+    const quiz = quizByFileId[fileId];
+    if (!quiz || quiz.state !== "completed" || quiz.questions.length === 0) {
+      return;
+    }
+
+    const answers = quizAnswersByFileId[fileId] ?? {};
+    const score = quiz.questions.reduce((count, question) => {
+      return answers[question.id] === question.correct_option_index ? count + 1 : count;
+    }, 0);
+
+    setQuizResultsByFileId((previous) => ({
+      ...previous,
+      [fileId]: { score, total: quiz.questions.length },
+    }));
+  };
+
+  const handleResetQuiz = (fileId: string) => {
+    setQuizAnswersByFileId((previous) => ({ ...previous, [fileId]: {} }));
+    setQuizResultsByFileId((previous) => {
+      const next = { ...previous };
+      delete next[fileId];
+      return next;
+    });
   };
 
   const handleRegenerateCode = async () => {
@@ -508,8 +603,8 @@ export default function ClassroomDetailPage() {
             ? announcements.map((announcement) => {
               const summaryFileId =
                 announcement.attachment?.type === "file" &&
-                announcement.attachment.file?.content_type === "application/pdf" &&
-                announcement.attachment.file.processing_status === "completed"
+                  announcement.attachment.file?.content_type === "application/pdf" &&
+                  announcement.attachment.file.processing_status === "completed"
                   ? announcement.attachment.file.id
                   : null;
               const isSummaryCompleted =
@@ -517,173 +612,170 @@ export default function ClassroomDetailPage() {
 
               return (
                 <article className="rounded-xl border border-slate-200 bg-white shadow-sm" key={announcement.id}>
-                <div className="flex items-start gap-3 px-4 py-4">
-                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-sky-700 text-sm font-semibold text-white">
-                    {initialsFromName(announcement.created_by_name)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium text-slate-900">{announcement.created_by_name}</p>
-                      <span className="text-xs text-slate-500">{formatPostedAt(announcement.created_at)}</span>
+                  <div className="flex items-start gap-3 px-4 py-4">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-sky-700 text-sm font-semibold text-white">
+                      <img src={"https://api.dicebear.com/9.x/adventurer/svg?seed=" + announcement.created_by_name} alt={announcement.created_by_name} className="size-full" />
                     </div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{announcement.body}</p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-slate-900">{announcement.created_by_name}</p>
+                        <span className="text-xs text-slate-500">{formatPostedAt(announcement.created_at)}</span>
+                      </div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{announcement.body}</p>
 
-                    {announcement.attachment ? (
-                      <div className="mt-3 space-y-2">
-                        <button
-                          className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100"
-                          onClick={() => {
-                            void handleOpenAttachment(announcement);
-                          }}
-                          type="button"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-slate-800">
-                              {announcement.attachment.title ||
-                                (announcement.attachment.type === "file"
-                                  ? announcement.attachment.file?.filename
-                                  : announcement.attachment.url)}
-                            </p>
-                            <p className="mt-0.5 text-xs text-slate-500">
-                              {announcement.attachment.type === "file"
-                                ? getFileStatusLabel(announcement.attachment)
-                                : announcement.attachment.type === "youtube"
-                                  ? "YouTube video"
-                                  : "External link"}
-                            </p>
-                          </div>
-                          <div className="ml-3 text-slate-600">
-                            {announcement.attachment.type === "file" ? (
-                              <PaperclipIcon className="size-4" />
-                            ) : announcement.attachment.type === "youtube" ? (
-                              <PlayCircleIcon className="size-4" />
-                            ) : (
-                              <Link2Icon className="size-4" />
-                            )}
-                          </div>
-                        </button>
+                      {announcement.attachment ? (
+                        <div className="mt-3 space-y-2">
+                          <button
+                            className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100"
+                            onClick={() => {
+                              void handleOpenAttachment(announcement);
+                            }}
+                            type="button"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-slate-800">
+                                {announcement.attachment.title ||
+                                  (announcement.attachment.type === "file"
+                                    ? announcement.attachment.file?.filename
+                                    : announcement.attachment.url)}
+                              </p>
+                              <p className="mt-0.5 text-xs text-slate-500">
+                                {announcement.attachment.type === "file"
+                                  ? getFileStatusLabel(announcement.attachment)
+                                  : announcement.attachment.type === "youtube"
+                                    ? "YouTube video"
+                                    : "External link"}
+                              </p>
+                            </div>
+                            <div className="ml-3 text-slate-600">
+                              {announcement.attachment.type === "file" ? (
+                                <PaperclipIcon className="size-4" />
+                              ) : announcement.attachment.type === "youtube" ? (
+                                <PlayCircleIcon className="size-4" />
+                              ) : (
+                                <Link2Icon className="size-4" />
+                              )}
+                            </div>
+                          </button>
 
-                        {summaryFileId ? (
-                          <details
-                            className={`group rounded-lg border p-3 transition ${
-                              isSummaryCompleted
+                          {summaryFileId ? (
+                            <details
+                              className={`group rounded-lg border p-3 transition ${isSummaryCompleted
                                 ? "border-sky-300 bg-gradient-to-r from-sky-50 via-cyan-50 to-emerald-50 shadow-sm"
                                 : "border-slate-200 bg-white"
-                            } ${isSummaryGeneratingByFileId[summaryFileId] ? "ring-2 ring-sky-200/70" : ""}`}
-                          >
-                            <summary
-                              className={`flex cursor-pointer list-none items-center justify-between text-sm font-semibold ${
-                                isSummaryCompleted ? "text-sky-900" : "text-slate-800"
-                              }`}
+                                } ${isSummaryGeneratingByFileId[summaryFileId] ? "ring-2 ring-sky-200/70" : ""}`}
                             >
-                              <span>
-                                {summaryByFileId[summaryFileId]?.state === "completed"
-                                  ? "Summary available"
-                                  : "AI Summary"}
-                              </span>
-                              <ChevronDownIcon
-                                className={`size-4 transition group-open:rotate-180 ${
-                                  isSummaryCompleted ? "text-sky-600" : "text-slate-500"
-                                }`}
-                              />
-                            </summary>
-                            <div className="mt-2 flex items-center justify-end gap-2 summary-open-content">
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  type="button"
-                                  variant="outline"
-                                  disabled={Boolean(isSummaryLoadingByFileId[summaryFileId])}
-                                  onClick={() => {
-                                    void handleLoadSummary(summaryFileId);
-                                  }}
-                                >
-                                  Refresh
-                                </Button>
-                                {isCreator ? (
+                              <summary
+                                className={`flex cursor-pointer list-none items-center justify-between text-sm font-semibold ${isSummaryCompleted ? "text-sky-900" : "text-slate-800"
+                                  }`}
+                              >
+                                <span>
+                                  {summaryByFileId[summaryFileId]?.state === "completed"
+                                    ? "Summary available"
+                                    : "AI Summary"}
+                                </span>
+                                <ChevronDownIcon
+                                  className={`size-4 transition group-open:rotate-180 ${isSummaryCompleted ? "text-sky-600" : "text-slate-500"
+                                    }`}
+                                />
+                              </summary>
+                              <div className="mt-2 flex items-center justify-end gap-2 summary-open-content">
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    type="button"
+                                    variant="outline"
+                                    disabled={Boolean(isSummaryLoadingByFileId[summaryFileId])}
+                                    onClick={() => {
+                                      void handleLoadSummary(summaryFileId);
+                                    }}
+                                  >
+                                    Refresh
+                                  </Button>
+                                  {isCreator ? (
+                                    <Button
+                                      size="sm"
+                                      type="button"
+                                      disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
+                                      onClick={() => {
+                                        void handleGenerateSummary(summaryFileId, true);
+                                      }}
+                                    >
+                                      {isSummaryGeneratingByFileId[summaryFileId] ? (
+                                        <span className="inline-flex items-center gap-1.5">
+                                          <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                                          Regenerating...
+                                        </span>
+                                      ) : (
+                                        "Regenerate"
+                                      )}
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              {isSummaryLoadingByFileId[summaryFileId] ? (
+                                <p className="mt-2 text-sm text-slate-500">Loading summary...</p>
+                              ) : null}
+
+                              {!isSummaryLoadingByFileId[summaryFileId] &&
+                                !summaryByFileId[summaryFileId] ? (
+                                <div className="mt-2 space-y-2">
+                                  <p className="text-sm text-slate-500">No summary loaded yet.</p>
                                   <Button
                                     size="sm"
                                     type="button"
                                     disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
                                     onClick={() => {
-                                      void handleGenerateSummary(summaryFileId, true);
+                                      void handleGenerateSummary(summaryFileId);
                                     }}
                                   >
-                                    {isSummaryGeneratingByFileId[summaryFileId] ? (
-                                      <span className="inline-flex items-center gap-1.5">
-                                        <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" />
-                                        Regenerating...
-                                      </span>
-                                    ) : (
-                                      "Regenerate"
-                                    )}
+                                    Generate summary
                                   </Button>
-                                ) : null}
-                              </div>
-                            </div>
+                                </div>
+                              ) : null}
 
-                            {isSummaryLoadingByFileId[summaryFileId] ? (
-                              <p className="mt-2 text-sm text-slate-500">Loading summary...</p>
-                            ) : null}
+                              {summaryByFileId[summaryFileId]?.state === "empty" ? (
+                                <div className="mt-2 space-y-2">
+                                  <p className="text-sm text-slate-500">No summary available yet.</p>
+                                  <Button
+                                    size="sm"
+                                    type="button"
+                                    disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
+                                    onClick={() => {
+                                      void handleGenerateSummary(summaryFileId);
+                                    }}
+                                  >
+                                    Generate summary
+                                  </Button>
+                                </div>
+                              ) : null}
 
-                            {!isSummaryLoadingByFileId[summaryFileId] &&
-                            !summaryByFileId[summaryFileId] ? (
-                              <div className="mt-2 space-y-2">
-                                <p className="text-sm text-slate-500">No summary loaded yet.</p>
-                                <Button
-                                  size="sm"
-                                  type="button"
-                                  disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
-                                  onClick={() => {
-                                    void handleGenerateSummary(summaryFileId);
-                                  }}
-                                >
-                                  Generate summary
-                                </Button>
-                              </div>
-                            ) : null}
+                              {summaryByFileId[summaryFileId]?.state === "pending" ? (
+                                <p className="mt-2 text-sm text-slate-500">Summary generation in progress...</p>
+                              ) : null}
 
-                            {summaryByFileId[summaryFileId]?.state === "empty" ? (
-                              <div className="mt-2 space-y-2">
-                                <p className="text-sm text-slate-500">No summary available yet.</p>
-                                <Button
-                                  size="sm"
-                                  type="button"
-                                  disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
-                                  onClick={() => {
-                                    void handleGenerateSummary(summaryFileId);
-                                  }}
-                                >
-                                  Generate summary
-                                </Button>
-                              </div>
-                            ) : null}
+                              {summaryByFileId[summaryFileId]?.state === "failed" ? (
+                                <div className="mt-2 space-y-2">
+                                  <p className="text-sm text-rose-600">
+                                    {summaryByFileId[summaryFileId]?.error_message ?? "Summary generation failed."}
+                                  </p>
+                                  <Button
+                                    size="sm"
+                                    type="button"
+                                    disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
+                                    onClick={() => {
+                                      void handleGenerateSummary(summaryFileId);
+                                    }}
+                                  >
+                                    Retry
+                                  </Button>
+                                </div>
+                              ) : null}
 
-                            {summaryByFileId[summaryFileId]?.state === "pending" ? (
-                              <p className="mt-2 text-sm text-slate-500">Summary generation in progress...</p>
-                            ) : null}
-
-                            {summaryByFileId[summaryFileId]?.state === "failed" ? (
-                              <div className="mt-2 space-y-2">
-                                <p className="text-sm text-rose-600">
-                                  {summaryByFileId[summaryFileId]?.error_message ?? "Summary generation failed."}
-                                </p>
-                                <Button
-                                  size="sm"
-                                  type="button"
-                                  disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
-                                  onClick={() => {
-                                    void handleGenerateSummary(summaryFileId);
-                                  }}
-                                >
-                                  Retry
-                                </Button>
-                              </div>
-                            ) : null}
-
-                            {summaryByFileId[summaryFileId]?.state === "completed" ? (
-                              <div
-                                className="summary-open-content mt-2 overflow-x-auto text-sm leading-6 text-slate-700
+                              {summaryByFileId[summaryFileId]?.state === "completed" ? (
+                                <div
+                                  className="summary-open-content mt-2 overflow-x-auto text-sm leading-6 text-slate-700
                                   [&_a]:text-sky-700 [&_a]:underline
                                   [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-600
                                   [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs
@@ -698,19 +790,160 @@ export default function ClassroomDetailPage() {
                                   [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1
                                   [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-100 [&_th]:px-2 [&_th]:py-1 [&_th]:font-medium
                                   [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
-                              >
-                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                  {summaryByFileId[summaryFileId]?.content ?? ""}
-                                </ReactMarkdown>
+                                >
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {summaryByFileId[summaryFileId]?.content ?? ""}
+                                  </ReactMarkdown>
+                                </div>
+                              ) : null}
+                            </details>
+                          ) : null}
+
+                          {summaryFileId ? (
+                            <details className="group rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 p-3 shadow-sm transition">
+                              <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold text-amber-900">
+                                <span>{quizByFileId[summaryFileId]?.state === "completed" ? "Quiz available" : "AI Quiz"}</span>
+                                <ChevronDownIcon className="size-4 text-amber-700 transition group-open:rotate-180" />
+                              </summary>
+
+                              <div className="mt-2 flex items-center justify-end gap-2 summary-open-content">
+                                <Button
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                  disabled={Boolean(isQuizLoadingByFileId[summaryFileId])}
+                                  onClick={() => {
+                                    void handleLoadQuiz(summaryFileId);
+                                  }}
+                                >
+                                  Refresh
+                                </Button>
+                                {isCreator ? (
+                                  <Button
+                                    size="sm"
+                                    type="button"
+                                    disabled={Boolean(isQuizGeneratingByFileId[summaryFileId])}
+                                    onClick={() => {
+                                      void handleGenerateQuiz(summaryFileId, quizByFileId[summaryFileId]?.state === "completed");
+                                    }}
+                                  >
+                                    {isQuizGeneratingByFileId[summaryFileId] ? (
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                                        Generating...
+                                      </span>
+                                    ) : quizByFileId[summaryFileId]?.state === "completed" ? (
+                                      "Regenerate"
+                                    ) : (
+                                      "Generate quiz"
+                                    )}
+                                  </Button>
+                                ) : null}
                               </div>
-                            ) : null}
-                          </details>
-                        ) : null}
-                      </div>
-                    ) : null}
+
+                              {isQuizLoadingByFileId[summaryFileId] ? (
+                                <p className="mt-2 text-sm text-slate-500">Loading quiz...</p>
+                              ) : null}
+
+                              {!isQuizLoadingByFileId[summaryFileId] && !quizByFileId[summaryFileId] ? (
+                                <p className="mt-2 text-sm text-slate-500">No quiz loaded yet.</p>
+                              ) : null}
+
+                              {quizByFileId[summaryFileId]?.state === "empty" ? (
+                                <p className="mt-2 text-sm text-slate-500">No quiz generated yet.</p>
+                              ) : null}
+
+                              {quizByFileId[summaryFileId]?.state === "pending" ? (
+                                <p className="mt-2 text-sm text-slate-500">Quiz generation in progress...</p>
+                              ) : null}
+
+                              {quizByFileId[summaryFileId]?.state === "failed" ? (
+                                <p className="mt-2 text-sm text-rose-600">
+                                  {quizByFileId[summaryFileId]?.error_message ?? "Quiz generation failed."}
+                                </p>
+                              ) : null}
+
+                              {quizByFileId[summaryFileId]?.state === "completed" ? (
+                                <div className="summary-open-content mt-3 space-y-4">
+                                  <p className="rounded-md bg-white/75 px-3 py-2 text-sm font-semibold text-amber-950 ring-1 ring-amber-100">
+                                    {quizByFileId[summaryFileId]?.title ?? "Generated Quiz"}
+                                  </p>
+
+                                  {quizByFileId[summaryFileId]?.questions.map((question, questionIndex) => {
+                                    const selectedOption = quizAnswersByFileId[summaryFileId]?.[question.id];
+                                    const result = quizResultsByFileId[summaryFileId];
+                                    const showResult = Boolean(result);
+                                    return (
+                                      <div className="rounded-lg border border-amber-200/70 bg-white/80 p-3 shadow-sm" key={question.id}>
+                                        <p className="text-sm font-medium text-slate-900">
+                                          {questionIndex + 1}. {question.prompt}
+                                        </p>
+                                        <div className="mt-2 space-y-2">
+                                          {question.options.map((option, optionIndex) => {
+                                            const isSelected = selectedOption === optionIndex;
+                                            const isCorrect = optionIndex === question.correct_option_index;
+                                            const showCorrect = showResult && isCorrect;
+                                            const showWrong = showResult && isSelected && !isCorrect;
+                                            return (
+                                              <button
+                                                className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${showCorrect
+                                                    ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                                    : showWrong
+                                                      ? "border-rose-300 bg-rose-50 text-rose-900"
+                                                      : isSelected
+                                                        ? "border-sky-300 bg-sky-50 text-sky-900"
+                                                      : "border-amber-100 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50/60"
+                                                  }`}
+                                                disabled={showResult}
+                                                key={`${question.id}-${optionIndex}`}
+                                                onClick={() => handleSelectQuizOption(summaryFileId, question.id, optionIndex)}
+                                                type="button"
+                                              >
+                                                {option}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                        {showResult && question.explanation ? (
+                                          <p className="mt-2 text-xs text-slate-600">Explanation: {question.explanation}</p>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {quizResultsByFileId[summaryFileId] ? (
+                                    <p className="rounded-md bg-gradient-to-r from-amber-600 to-rose-600 px-3 py-2 text-sm font-semibold text-white shadow-sm">
+                                      Score: {quizResultsByFileId[summaryFileId].score} / {quizResultsByFileId[summaryFileId].total}
+                                    </p>
+                                  ) : null}
+
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      size="sm"
+                                      type="button"
+                                      className="bg-amber-700 text-white hover:bg-amber-800"
+                                      onClick={() => handleSubmitQuiz(summaryFileId)}
+                                    >
+                                      Submit quiz
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      type="button"
+                                      variant="outline"
+                                      onClick={() => handleResetQuiz(summaryFileId)}
+                                    >
+                                      Reset answers
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </details>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              </article>
+                </article>
               );
             })
             : null}

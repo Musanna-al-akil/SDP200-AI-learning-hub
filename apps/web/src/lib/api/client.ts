@@ -164,6 +164,29 @@ export type FileSummary = {
   updated_at: string | null;
 };
 
+export type FileQuizState = "empty" | "pending" | "completed" | "failed";
+
+export type QuizQuestion = {
+  id: string;
+  prompt: string;
+  options: string[];
+  correct_option_index: number;
+  explanation: string | null;
+  position: number;
+};
+
+export type FileQuiz = {
+  state: FileQuizState;
+  quiz_id: string | null;
+  file_id: string;
+  title: string | null;
+  questions: QuizQuestion[];
+  error_message: string | null;
+  provider: string | null;
+  model: string | null;
+  updated_at: string | null;
+};
+
 export type AnnouncementAttachmentFile = {
   id: string;
   filename: string;
@@ -315,5 +338,14 @@ export const apiClient = {
     requestJson<FileSummary>(`/files/${fileId}/summary`, {
       method: "POST",
       body: JSON.stringify({ regenerate: Boolean(payload?.regenerate) }),
+    }),
+  getFileQuiz: (fileId: string) => requestJson<FileQuiz>(`/files/${fileId}/quiz`),
+  generateFileQuiz: (fileId: string, payload?: { regenerate?: boolean; questionCount?: number }) =>
+    requestJson<FileQuiz>(`/files/${fileId}/quiz`, {
+      method: "POST",
+      body: JSON.stringify({
+        regenerate: Boolean(payload?.regenerate),
+        question_count: payload?.questionCount ?? 5,
+      }),
     }),
 };

@@ -9,13 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_async_session
 from app.guards import require_classroom_membership
-from app.models import AIOutput, Classroom, ClassroomMembership, File, User
+from app.models import AIOutput, Classroom, ClassroomMembership, File, Quiz, QuizQuestion, User
+from app.quiz_service import QUIZ_MODEL, QUIZ_PROVIDER, generate_quiz_from_text
 from app.schemas import (
     FileDownloadResponse,
     FileListResponse,
+    FileQuizGenerateRequest,
+    FileQuizResponse,
     FileResponse,
     FileSummaryGenerateRequest,
     FileSummaryResponse,
+    QuizQuestionResponse,
 )
 from app.storage import create_download_url
 from app.summary_service import SUMMARY_MODEL, SUMMARY_PROVIDER, generate_summary_from_text
@@ -218,3 +222,153 @@ async def generate_file_summary(
     await db.commit()
     await db.refresh(summary)
     return _to_summary_response(summary, item.id)
+
+
+def _to_quiz_question_response(question: QuizQuestion) -> QuizQuestionResponse:
+    return QuizQuestionResponse(
+        id=question.id,
+        prompt=question.prompt,
+        options=question.options,
+        correct_option_index=question.correct_option_index,
+        explanation=question.explanation,
+        position=question.position,
+    )
+
+
+async def _get_latest_quiz(db: AsyncSession, file_id: UUID) -> Quiz | None:
+    result = await db.execute(
+        select(Quiz)
+        .where(Quiz.file_id == file_id)
+        .order_by(Quiz.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_latest_completed_quiz(db: AsyncSession, file_id: UUID) -> Quiz | None:
+    result = await db.execute(
+        select(Quiz)
+        .where(Quiz.file_id == file_id, Quiz.status == "completed")
+        .order_by(Quiz.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_quiz_questions(db: AsyncSession, quiz_id: UUID) -> list[QuizQuestion]:
+    result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz_id).order_by(QuizQuestion.position.asc()))
+    return result.scalars().all()
+
+
+def _to_quiz_response(quiz: Quiz | None, file_id: UUID, questions: list[QuizQuestion] | None = None, error_message: str | None = None) -> FileQuizResponse:
+    if quiz is None:
+        return FileQuizResponse(state="empty", file_id=file_id)
+    state = quiz.status if quiz.status in {"pending", "completed", "failed"} else "empty"
+    payload_questions = [_to_quiz_question_response(question) for question in (questions or [])] if state == "completed" else []
+    return FileQuizResponse(
+        state=state,
+        quiz_id=quiz.id,
+        file_id=file_id,
+        title=quiz.title,
+        questions=payload_questions,
+        error_message=error_message if state == "failed" else None,
+        provider=QUIZ_PROVIDER if state != "empty" else None,
+        model=QUIZ_MODEL if state != "empty" else None,
+        updated_at=quiz.updated_at,
+    )
+
+
+@router.get("/files/{file_id}/quiz", response_model=FileQuizResponse)
+async def get_file_quiz(
+    file_id: UUID,
+    db: db_dependency,
+    user: User = Depends(current_active_user),
+) -> FileQuizResponse:
+    item = await _get_authorized_file(file_id, user.id, db)
+    quiz = await _get_latest_completed_quiz(db, item.id)
+    if quiz is None:
+        quiz = await _get_latest_quiz(db, item.id)
+    if quiz is None:
+        return _to_quiz_response(None, item.id)
+    questions = await _get_quiz_questions(db, quiz.id) if quiz.status == "completed" else []
+    return _to_quiz_response(quiz, item.id, questions)
+
+
+@router.post("/files/{file_id}/quiz", response_model=FileQuizResponse)
+async def generate_file_quiz(
+    file_id: UUID,
+    payload: FileQuizGenerateRequest,
+    db: db_dependency,
+    user: User = Depends(current_active_user),
+) -> FileQuizResponse:
+    item = await _get_authorized_file(file_id, user.id, db)
+    if item.content_type != "application/pdf":
+        raise _error(status.HTTP_400_BAD_REQUEST, "invalid_file_type", "Quizzes are only available for PDF files.")
+    if item.processing_status != "completed":
+        raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "Quiz generation requires a processed PDF file.")
+    if not item.extracted_text or not item.extracted_text.strip():
+        raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "No extracted text found for this file.")
+
+    membership_role = await db.scalar(
+        select(ClassroomMembership.role).where(
+            ClassroomMembership.classroom_id == item.classroom_id,
+            ClassroomMembership.user_id == user.id,
+            ClassroomMembership.status == "active",
+        )
+    )
+    if membership_role not in ("creator", "member"):
+        raise _error(status.HTTP_403_FORBIDDEN, "forbidden", "You do not have access to this resource.")
+    if membership_role != "creator":
+        raise _error(status.HTTP_403_FORBIDDEN, "forbidden", "Only creators can generate quizzes.")
+
+    existing = await _get_latest_quiz(db, item.id)
+    existing_completed = await _get_latest_completed_quiz(db, item.id)
+    if not payload.regenerate and existing_completed is not None:
+        existing_questions = await _get_quiz_questions(db, existing_completed.id)
+        return _to_quiz_response(existing_completed, item.id, existing_questions)
+
+    should_create_new_row = payload.regenerate and existing_completed is not None
+    quiz = (None if should_create_new_row else existing) or Quiz(
+        classroom_id=item.classroom_id,
+        file_id=item.id,
+        created_by_id=user.id,
+        title="Generated Quiz",
+    )
+
+    if should_create_new_row or existing is None:
+        db.add(quiz)
+
+    quiz.status = "pending"
+    await db.commit()
+    await db.refresh(quiz)
+
+    try:
+        title, generated_questions = generate_quiz_from_text(item.extracted_text, payload.question_count)
+        quiz.title = title
+        quiz.status = "completed"
+
+        existing_questions_result = await db.execute(select(QuizQuestion).where(QuizQuestion.quiz_id == quiz.id))
+        for question in existing_questions_result.scalars().all():
+            await db.delete(question)
+
+        for index, question_payload in enumerate(generated_questions):
+            question = QuizQuestion(
+                quiz_id=quiz.id,
+                prompt=str(question_payload["prompt"]),
+                options=list(question_payload["options"]),
+                correct_option_index=int(question_payload["correct_option_index"]),
+                explanation=str(question_payload["explanation"]) if question_payload.get("explanation") else None,
+                position=index,
+            )
+            db.add(question)
+
+        await db.commit()
+        await db.refresh(quiz)
+        questions = await _get_quiz_questions(db, quiz.id)
+        return _to_quiz_response(quiz, item.id, questions)
+    except Exception as error:
+        quiz.status = "failed"
+        await db.commit()
+        await db.refresh(quiz)
+        message = str(error) or "Quiz generation failed."
+        return _to_quiz_response(quiz, item.id, [], message)
