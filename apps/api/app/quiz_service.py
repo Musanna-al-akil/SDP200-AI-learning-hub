@@ -115,3 +115,57 @@ def generate_quiz_from_text(extracted_text: str, question_count: int) -> tuple[s
     title = title_value.strip() if isinstance(title_value, str) and title_value.strip() else "Generated Quiz"
 
     return title, questions
+
+
+def generate_quiz_from_image(
+    image_url: str,
+    question_count: int,
+    file_title: str | None = None,
+    filename: str | None = None,
+    announcement_body: str | None = None,
+) -> tuple[str, list[dict[str, object]]]:
+    client = OpenAI(
+        api_key=settings.openrouter_api_key,
+        base_url="https://openrouter.ai/api/v1",
+    )
+    metadata = (
+        f"File title: {file_title or 'N/A'}\n"
+        f"Filename: {filename or 'N/A'}\n"
+        f"Announcement context: {announcement_body or 'N/A'}"
+    )
+    response = client.chat.completions.create(
+        model=QUIZ_MODEL,
+        messages=[
+            {"role": "system", "content": QUIZ_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Generate a quiz from this classroom image."
+                            f" Return JSON with shape: {{\"title\": string, \"questions\": [{{\"prompt\": string, \"options\": [string,string,string,string], \"correct_option_index\": 0-3, \"explanation\": string}}]}}."
+                            f" Generate {question_count} questions. Keep questions clear and classroom-appropriate.\n"
+                            "Use the image as the primary source and metadata only as supporting context.\n\n"
+                            f"{metadata}"
+                        ),
+                    },
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            },
+        ],
+        temperature=0.3,
+    )
+
+    raw_content = (response.choices[0].message.content or "").strip() if response.choices else ""
+    payload = _extract_json_payload(raw_content)
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise QuizGenerationError("Provider returned invalid quiz JSON.") from error
+
+    questions = _normalize_questions(parsed, question_count)
+    title_value = parsed.get("title") if isinstance(parsed, dict) else None
+    title = title_value.strip() if isinstance(title_value, str) and title_value.strip() else "Generated Quiz"
+
+    return title, questions

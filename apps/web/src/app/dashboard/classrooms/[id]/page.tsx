@@ -2,7 +2,6 @@
 "use client";
 
 import { ChevronDownIcon, CircleOffIcon, Link2Icon, Loader2Icon, PaperclipIcon, PlayCircleIcon, PlusIcon, UsersIcon } from "lucide-react";
-import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -68,6 +67,51 @@ function getFileStatusLabel(attachment: ClassroomAnnouncement["attachment"]): st
   return "PDF";
 }
 
+function getAiEligibleFileId(attachment: ClassroomAnnouncement["attachment"]): string | null {
+  if (attachment?.type !== "file" || !attachment.file) {
+    return null;
+  }
+  if (attachment.file.content_type === "application/pdf") {
+    return attachment.file.processing_status === "completed" ? attachment.file.id : null;
+  }
+  if (attachment.file.content_type.startsWith("image/")) {
+    return attachment.file.id;
+  }
+  return null;
+}
+
+function getYoutubeEmbedUrl(url: string | null | undefined): string | null {
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    const host = parsedUrl.hostname.toLowerCase();
+
+    if (host.includes("youtu.be")) {
+      const id = parsedUrl.pathname.split("/").filter(Boolean)[0];
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+
+    if (host.includes("youtube.com")) {
+      if (parsedUrl.pathname === "/watch") {
+        const id = parsedUrl.searchParams.get("v");
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+
+      if (parsedUrl.pathname.startsWith("/embed/")) {
+        const id = parsedUrl.pathname.split("/").filter(Boolean)[1];
+        return id ? `https://www.youtube.com/embed/${id}` : null;
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -105,6 +149,7 @@ export default function ClassroomDetailPage() {
   const [isQuizGeneratingByFileId, setIsQuizGeneratingByFileId] = useState<Record<string, boolean>>({});
   const [quizAnswersByFileId, setQuizAnswersByFileId] = useState<Record<string, Record<string, number>>>({});
   const [quizResultsByFileId, setQuizResultsByFileId] = useState<Record<string, QuizResult>>({});
+  const [imagePreviewUrlByFileId, setImagePreviewUrlByFileId] = useState<Record<string, string | null>>({});
 
   const isCreator = classroom?.membership_role === "creator";
 
@@ -190,14 +235,52 @@ export default function ClassroomDetailPage() {
   }, [announcements, loadAnnouncements]);
 
   useEffect(() => {
-    const summaryFileIds = announcements
-      .filter(
-        (announcement) =>
-          announcement.attachment?.type === "file" &&
-          announcement.attachment.file?.content_type === "application/pdf" &&
-          announcement.attachment.file.processing_status === "completed",
+    const imageFileIds = announcements
+      .map((announcement) =>
+        announcement.attachment?.type === "file" &&
+        announcement.attachment.file?.content_type.startsWith("image/")
+          ? announcement.attachment.file.id
+          : null,
       )
-      .map((announcement) => announcement.attachment?.file?.id)
+      .filter((value): value is string => Boolean(value));
+
+    const missingImageFileIds = imageFileIds.filter((fileId) => imagePreviewUrlByFileId[fileId] === undefined);
+    if (missingImageFileIds.length === 0) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    void Promise.all(
+      missingImageFileIds.map(async (fileId) => {
+        try {
+          const result = await apiClient.getFileDownloadUrl(fileId);
+          return [fileId, result.url] as const;
+        } catch {
+          return [fileId, null] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (isCancelled) {
+        return;
+      }
+      setImagePreviewUrlByFileId((previous) => {
+        const next = { ...previous };
+        for (const [fileId, previewUrl] of entries) {
+          next[fileId] = previewUrl;
+        }
+        return next;
+      });
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [announcements, imagePreviewUrlByFileId]);
+
+  useEffect(() => {
+    const summaryFileIds = announcements
+      .map((announcement) => getAiEligibleFileId(announcement.attachment))
       .filter((value): value is string => Boolean(value));
 
     const missingFileIds = summaryFileIds.filter((fileId) => summaryByFileId[fileId] === undefined);
@@ -219,13 +302,7 @@ export default function ClassroomDetailPage() {
 
   useEffect(() => {
     const quizFileIds = announcements
-      .filter(
-        (announcement) =>
-          announcement.attachment?.type === "file" &&
-          announcement.attachment.file?.content_type === "application/pdf" &&
-          announcement.attachment.file.processing_status === "completed",
-      )
-      .map((announcement) => announcement.attachment?.file?.id)
+      .map((announcement) => getAiEligibleFileId(announcement.attachment))
       .filter((value): value is string => Boolean(value));
 
     const missingFileIds = quizFileIds.filter((fileId) => quizByFileId[fileId] === undefined);
@@ -508,10 +585,6 @@ export default function ClassroomDetailPage() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
-      <Link className="text-sm text-blue-700 hover:underline" href="/dashboard">
-        Back to dashboard
-      </Link>
-
       <section className="relative overflow-hidden rounded-2xl border border-slate-300 bg-gradient-to-r from-slate-600 via-slate-700 to-slate-800 px-6 py-8 text-white shadow-sm">
         <div className="absolute right-6 top-6 hidden rounded-full border border-white/25 bg-white/10 px-4 py-1.5 text-xs font-medium backdrop-blur sm:block">
           Stream
@@ -601,14 +674,17 @@ export default function ClassroomDetailPage() {
 
           {!isLoadingAnnouncements
             ? announcements.map((announcement) => {
-              const summaryFileId =
-                announcement.attachment?.type === "file" &&
-                  announcement.attachment.file?.content_type === "application/pdf" &&
-                  announcement.attachment.file.processing_status === "completed"
-                  ? announcement.attachment.file.id
-                  : null;
+              const summaryFileId = getAiEligibleFileId(announcement.attachment);
               const isSummaryCompleted =
                 summaryFileId !== null && summaryByFileId[summaryFileId]?.state === "completed";
+              const isImageAttachment =
+                announcement.attachment?.type === "file" &&
+                Boolean(announcement.attachment.file?.content_type.startsWith("image/"));
+              const imageFileId = isImageAttachment ? announcement.attachment?.file?.id ?? null : null;
+              const imagePreviewUrl = imageFileId ? imagePreviewUrlByFileId[imageFileId] : null;
+              const youtubeEmbedUrl = getYoutubeEmbedUrl(
+                announcement.attachment?.type === "youtube" ? announcement.attachment.url : null,
+              );
 
               return (
                 <article className="rounded-xl border border-slate-200 bg-white shadow-sm" key={announcement.id}>
@@ -657,6 +733,40 @@ export default function ClassroomDetailPage() {
                               )}
                             </div>
                           </button>
+
+                          {isImageAttachment && imagePreviewUrl ? (
+                            <button
+                              aria-label={`Open attached image: ${announcement.attachment?.title || announcement.attachment?.file?.filename || "Image"}`}
+                              className="block w-full overflow-hidden rounded-lg border border-slate-200 bg-white transition hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2"
+                              onClick={() => {
+                                void handleOpenAttachment(announcement);
+                              }}
+                              type="button"
+                            >
+                              <div className="aspect-video w-full bg-slate-100">
+                                <img
+                                  alt={announcement.attachment?.title || announcement.attachment?.file?.filename || "Announcement attachment"}
+                                  className="h-full w-full object-cover"
+                                  src={imagePreviewUrl}
+                                />
+                              </div>
+                            </button>
+                          ) : null}
+
+                          {announcement.attachment?.type === "youtube" && youtubeEmbedUrl ? (
+                            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                              <div className="aspect-video w-full bg-slate-100">
+                                <iframe
+                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                  allowFullScreen
+                                  className="h-full w-full"
+                                  referrerPolicy="strict-origin-when-cross-origin"
+                                  src={youtubeEmbedUrl}
+                                  title={announcement.attachment.title || "YouTube video attachment"}
+                                />
+                              </div>
+                            </div>
+                          ) : null}
 
                           {summaryFileId ? (
                             <details
@@ -887,11 +997,11 @@ export default function ClassroomDetailPage() {
                                             return (
                                               <button
                                                 className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${showCorrect
-                                                    ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-                                                    : showWrong
-                                                      ? "border-rose-300 bg-rose-50 text-rose-900"
-                                                      : isSelected
-                                                        ? "border-sky-300 bg-sky-50 text-sky-900"
+                                                  ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+                                                  : showWrong
+                                                    ? "border-rose-300 bg-rose-50 text-rose-900"
+                                                    : isSelected
+                                                      ? "border-sky-300 bg-sky-50 text-sky-900"
                                                       : "border-amber-100 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50/60"
                                                   }`}
                                                 disabled={showResult}

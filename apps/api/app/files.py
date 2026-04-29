@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_async_session
 from app.guards import require_classroom_membership
-from app.models import AIOutput, Classroom, ClassroomMembership, File, Quiz, QuizQuestion, User
-from app.quiz_service import QUIZ_MODEL, QUIZ_PROVIDER, generate_quiz_from_text
+from app.models import AIOutput, Announcement, Classroom, ClassroomMembership, File, Quiz, QuizQuestion, User
+from app.quiz_service import QUIZ_MODEL, QUIZ_PROVIDER, generate_quiz_from_image, generate_quiz_from_text
 from app.schemas import (
     FileDownloadResponse,
     FileListResponse,
@@ -22,7 +22,7 @@ from app.schemas import (
     QuizQuestionResponse,
 )
 from app.storage import create_download_url
-from app.summary_service import SUMMARY_MODEL, SUMMARY_PROVIDER, generate_summary_from_text
+from app.summary_service import SUMMARY_MODEL, SUMMARY_PROVIDER, generate_summary_from_image, generate_summary_from_text
 from app.users import current_active_user
 
 router = APIRouter(tags=["files"])
@@ -45,6 +45,28 @@ def _to_file_response(item: File) -> FileResponse:
         processing_error=item.processing_error,
         created_at=item.created_at,
     )
+
+
+def _is_pdf_file(item: File) -> bool:
+    return item.content_type == "application/pdf"
+
+
+def _is_image_file(item: File) -> bool:
+    return item.content_type.startswith("image/")
+
+
+def _is_supported_ai_file(item: File) -> bool:
+    return _is_pdf_file(item) or _is_image_file(item)
+
+
+async def _get_file_announcement_context(file_id: UUID, db: AsyncSession) -> str | None:
+    result = await db.execute(
+        select(Announcement.body)
+        .where(Announcement.file_id == file_id)
+        .order_by(Announcement.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _get_authorized_file(file_id: UUID, user_id: UUID, db: AsyncSession) -> File:
@@ -158,16 +180,17 @@ async def generate_file_summary(
     user: User = Depends(current_active_user),
 ) -> FileSummaryResponse:
     item = await _get_authorized_file(file_id, user.id, db)
-    if item.content_type != "application/pdf":
-        raise _error(status.HTTP_400_BAD_REQUEST, "invalid_file_type", "Summaries are only available for PDF files.")
-    if item.processing_status != "completed":
-        raise _error(
-            status.HTTP_400_BAD_REQUEST,
-            "file_not_ready",
-            "Summary generation requires a processed PDF file.",
-        )
-    if not item.extracted_text or not item.extracted_text.strip():
-        raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "No extracted text found for this file.")
+    if not _is_supported_ai_file(item):
+        raise _error(status.HTTP_400_BAD_REQUEST, "invalid_file_type", "Summaries are only available for PDF or image files.")
+    if _is_pdf_file(item):
+        if item.processing_status != "completed":
+            raise _error(
+                status.HTTP_400_BAD_REQUEST,
+                "file_not_ready",
+                "Summary generation requires a processed PDF file.",
+            )
+        if not item.extracted_text or not item.extracted_text.strip():
+            raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "No extracted text found for this file.")
 
     membership_role = await db.scalar(
         select(ClassroomMembership.role).where(
@@ -197,7 +220,7 @@ async def generate_file_summary(
         db.add(summary)
 
     summary.status = "pending"
-    summary.prompt = "Summarize extracted classroom PDF content."
+    summary.prompt = "Summarize classroom material from a file attachment."
     summary.content = None
     summary.error_message = None
     summary.provider = SUMMARY_PROVIDER
@@ -206,7 +229,15 @@ async def generate_file_summary(
     await db.refresh(summary)
 
     try:
-        content = generate_summary_from_text(item.extracted_text)
+        if _is_pdf_file(item):
+            content = generate_summary_from_text(item.extracted_text or "")
+        else:
+            content = generate_summary_from_image(
+                image_url=create_download_url(item.storage_key),
+                file_title=item.title,
+                filename=item.filename,
+                announcement_body=await _get_file_announcement_context(item.id, db),
+            )
         summary.status = "completed"
         summary.content = content
         summary.error_message = None
@@ -302,12 +333,13 @@ async def generate_file_quiz(
     user: User = Depends(current_active_user),
 ) -> FileQuizResponse:
     item = await _get_authorized_file(file_id, user.id, db)
-    if item.content_type != "application/pdf":
-        raise _error(status.HTTP_400_BAD_REQUEST, "invalid_file_type", "Quizzes are only available for PDF files.")
-    if item.processing_status != "completed":
-        raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "Quiz generation requires a processed PDF file.")
-    if not item.extracted_text or not item.extracted_text.strip():
-        raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "No extracted text found for this file.")
+    if not _is_supported_ai_file(item):
+        raise _error(status.HTTP_400_BAD_REQUEST, "invalid_file_type", "Quizzes are only available for PDF or image files.")
+    if _is_pdf_file(item):
+        if item.processing_status != "completed":
+            raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "Quiz generation requires a processed PDF file.")
+        if not item.extracted_text or not item.extracted_text.strip():
+            raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "No extracted text found for this file.")
 
     membership_role = await db.scalar(
         select(ClassroomMembership.role).where(
@@ -343,7 +375,16 @@ async def generate_file_quiz(
     await db.refresh(quiz)
 
     try:
-        title, generated_questions = generate_quiz_from_text(item.extracted_text, payload.question_count)
+        if _is_pdf_file(item):
+            title, generated_questions = generate_quiz_from_text(item.extracted_text or "", payload.question_count)
+        else:
+            title, generated_questions = generate_quiz_from_image(
+                image_url=create_download_url(item.storage_key),
+                question_count=payload.question_count,
+                file_title=item.title,
+                filename=item.filename,
+                announcement_body=await _get_file_announcement_context(item.id, db),
+            )
         quiz.title = title
         quiz.status = "completed"
 
