@@ -1,11 +1,51 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette import status
+
+from app.auth import router as auth_router
 from app.config import get_settings
+from app.db import Base, engine
+from app import models  # noqa: F401
 
 settings = get_settings()
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        payload = exc.detail
+    else:
+        payload = {
+            "error": {
+                "code": "http_error",
+                "message": str(exc.detail),
+            }
+        }
+    return JSONResponse(status_code=exc.status_code, content=payload)
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(_: Request, __: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"error": {"code": "internal_server_error", "message": "Internal server error."}},
+    )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,6 +55,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
+
+
 @app.get("/")
 def home():
     return {"message": "Hello from Python on Vercel"}
@@ -23,8 +66,3 @@ def home():
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "api"}
-
-
-@app.get("/api/items/{item_id}")
-def read_item(item_id: int):
-    return {"item_id": item_id}
