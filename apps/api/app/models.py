@@ -64,6 +64,20 @@ class File(TimestampMixin, Base):
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class Announcement(TimestampMixin, Base):
+    __tablename__ = "announcements"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    classroom_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("classrooms.id"), nullable=False, index=True)
+    created_by_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    attachment_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    attachment_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("files.id"), nullable=True, index=True)
+    link_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    youtube_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+
+
 class AIOutput(TimestampMixin, Base):
     __tablename__ = "ai_outputs"
 

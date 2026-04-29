@@ -56,6 +56,7 @@ class Settings:
     api_host: str
     api_port: int
     api_base_url: str
+    max_upload_size_mb: int
 
 
 @lru_cache
@@ -77,4 +78,5 @@ def get_settings() -> Settings:
         api_host=_env("API_HOST", "0.0.0.0"),
         api_port=_int_env("API_PORT", "8000"),
         api_base_url=_env("API_BASE_URL", "http://localhost:8000").rstrip("/"),
+        max_upload_size_mb=_int_env("MAX_UPLOAD_SIZE_MB", "50"),
     )

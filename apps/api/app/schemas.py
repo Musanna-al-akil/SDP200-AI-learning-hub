@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi_users import schemas
@@ -79,3 +80,52 @@ class ClassroomMemberResponse(BaseModel):
 
 class ClassroomMembersListResponse(BaseModel):
     members: list[ClassroomMemberResponse]
+
+
+class FileResponse(BaseModel):
+    id: UUID
+    classroom_id: UUID
+    filename: str
+    title: str | None
+    content_type: str
+    size_bytes: int
+    processing_status: str
+    created_at: datetime
+
+
+class FileListResponse(BaseModel):
+    files: list[FileResponse]
+
+
+class FileDownloadResponse(BaseModel):
+    url: str
+
+
+class AnnouncementAttachmentFileResponse(BaseModel):
+    id: UUID
+    filename: str
+    title: str | None
+    content_type: str
+    size_bytes: int
+    processing_status: str
+
+
+class AnnouncementAttachmentResponse(BaseModel):
+    type: Literal["file", "link", "youtube"]
+    title: str | None
+    file: AnnouncementAttachmentFileResponse | None = None
+    url: str | None = None
+
+
+class AnnouncementResponse(BaseModel):
+    id: UUID
+    classroom_id: UUID
+    created_by_id: UUID
+    created_by_name: str
+    body: str
+    attachment: AnnouncementAttachmentResponse | None
+    created_at: datetime
+
+
+class AnnouncementListResponse(BaseModel):
+    announcements: list[AnnouncementResponse]

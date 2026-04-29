@@ -6,7 +6,9 @@ from fastapi.responses import JSONResponse
 from starlette import status
 
 from app.auth import router as auth_router
+from app.announcements import router as announcements_router
 from app.classrooms import router as classrooms_router
+from app.files import router as files_router
 from app.config import get_settings
 
 settings = get_settings()
@@ -47,6 +49,8 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(classrooms_router)
+app.include_router(announcements_router)
+app.include_router(files_router)
 
 
 @app.get("/")

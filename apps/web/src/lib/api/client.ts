@@ -42,17 +42,21 @@ export function clearStoredToken(): void {
   window.localStorage.removeItem(TOKEN_KEY);
 }
 
-async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, hasJsonBody = true): Promise<T> {
   const token = getStoredToken();
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...((init?.headers as Record<string, string> | undefined) ?? {}),
+  };
+
+  if (hasJsonBody && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
 
   const response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
     ...init,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
+    headers,
     cache: "no-store",
   });
 
@@ -75,6 +79,14 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return data as T;
+}
+
+async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, init, true);
+}
+
+async function requestFormData<T>(path: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, init, false);
 }
 
 export type HealthResponse = {
@@ -121,6 +133,51 @@ export type ClassroomMember = {
 
 export type ClassroomMembersResponse = {
   members: ClassroomMember[];
+};
+
+export type ClassroomFile = {
+  id: string;
+  classroom_id: string;
+  filename: string;
+  title: string | null;
+  content_type: string;
+  size_bytes: number;
+  processing_status: string;
+  created_at: string;
+};
+
+export type ClassroomFilesResponse = {
+  files: ClassroomFile[];
+};
+
+export type AnnouncementAttachmentFile = {
+  id: string;
+  filename: string;
+  title: string | null;
+  content_type: string;
+  size_bytes: number;
+  processing_status: string;
+};
+
+export type AnnouncementAttachment = {
+  type: "file" | "link" | "youtube";
+  title: string | null;
+  file?: AnnouncementAttachmentFile | null;
+  url?: string | null;
+};
+
+export type ClassroomAnnouncement = {
+  id: string;
+  classroom_id: string;
+  created_by_id: string;
+  created_by_name: string;
+  body: string;
+  attachment: AnnouncementAttachment | null;
+  created_at: string;
+};
+
+export type ClassroomAnnouncementsResponse = {
+  announcements: ClassroomAnnouncement[];
 };
 
 export type RegisterPayload = {
@@ -195,4 +252,36 @@ export const apiClient = {
     requestJson<{ success: boolean }>(`/classrooms/${classroomId}/members/${memberUserId}`, {
       method: "DELETE",
     }),
+  listClassroomFiles: (classroomId: string) =>
+    requestJson<ClassroomFilesResponse>(`/classrooms/${classroomId}/files`),
+  listClassroomAnnouncements: (classroomId: string) =>
+    requestJson<ClassroomAnnouncementsResponse>(`/classrooms/${classroomId}/announcements`),
+  createClassroomAnnouncement: (classroomId: string, payload: {
+    body: string;
+    attachmentType?: "file" | "link" | "youtube";
+    attachmentTitle?: string;
+    attachmentUrl?: string;
+    file?: File;
+  }) => {
+    const formData = new FormData();
+    formData.append("body", payload.body.trim());
+    if (payload.attachmentType) {
+      formData.append("attachment_type", payload.attachmentType);
+    }
+    if (payload.attachmentTitle?.trim()) {
+      formData.append("attachment_title", payload.attachmentTitle.trim());
+    }
+    if (payload.attachmentUrl?.trim()) {
+      formData.append("attachment_url", payload.attachmentUrl.trim());
+    }
+    if (payload.file) {
+      formData.append("file", payload.file);
+    }
+    return requestFormData<ClassroomAnnouncement>(`/classrooms/${classroomId}/announcements`, {
+      method: "POST",
+      body: formData,
+    });
+  },
+  getFile: (fileId: string) => requestJson<ClassroomFile>(`/files/${fileId}`),
+  getFileDownloadUrl: (fileId: string) => requestJson<{ url: string }>(`/files/${fileId}/download`),
 };
