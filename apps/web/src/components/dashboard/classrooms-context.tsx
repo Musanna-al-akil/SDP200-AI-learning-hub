@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { apiClient, type Classroom } from "@/lib/api/client";
+import { useAuth } from "@/lib/auth/auth-provider";
 
 type ClassroomsContextValue = {
   classrooms: Classroom[];
@@ -15,6 +16,7 @@ type ClassroomsContextValue = {
 const ClassroomsContext = React.createContext<ClassroomsContextValue | undefined>(undefined);
 
 export function ClassroomsProvider({ children }: { children: React.ReactNode }) {
+  const { isLoading, isAuthenticated } = useAuth();
   const [classrooms, setClassrooms] = React.useState<Classroom[]>([]);
   const [isLoadingClassrooms, setIsLoadingClassrooms] = React.useState(true);
   const [classroomsError, setClassroomsError] = React.useState<string | null>(null);
@@ -33,6 +35,13 @@ export function ClassroomsProvider({ children }: { children: React.ReactNode }) 
       setIsLoadingClassrooms(false);
     }
   }, []);
+
+  React.useEffect(() => {
+    if (isLoading || !isAuthenticated) {
+      return;
+    }
+    void refreshClassrooms();
+  }, [isAuthenticated, isLoading, refreshClassrooms]);
 
   const value = React.useMemo<ClassroomsContextValue>(
     () => ({
