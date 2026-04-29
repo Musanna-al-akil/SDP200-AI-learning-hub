@@ -96,6 +96,33 @@ export type AuthResponse = {
   token: string;
 };
 
+export type Classroom = {
+  id: string;
+  name: string;
+  description: string | null;
+  creator_id: string;
+  creator_name: string;
+  membership_role: "creator" | "member";
+  join_code: string;
+  created_at: string;
+};
+
+export type ClassroomListResponse = {
+  classrooms: Classroom[];
+};
+
+export type ClassroomMember = {
+  user_id: string;
+  role: "creator" | "member";
+  status: "active" | "removed";
+  name: string;
+  email: string;
+};
+
+export type ClassroomMembersResponse = {
+  members: ClassroomMember[];
+};
+
 export type RegisterPayload = {
   name: string;
   email: string;
@@ -105,6 +132,16 @@ export type RegisterPayload = {
 export type LoginPayload = {
   email: string;
   password: string;
+};
+
+export type CreateClassroomPayload = {
+  name: string;
+  description?: string;
+};
+
+export type UpdateClassroomPayload = {
+  name?: string;
+  description?: string;
 };
 
 export const apiClient = {
@@ -124,4 +161,38 @@ export const apiClient = {
       method: "POST",
     }),
   me: () => requestJson<AuthUser>("/auth/me"),
+  listClassrooms: () => requestJson<ClassroomListResponse>("/classrooms"),
+  createClassroom: (payload: CreateClassroomPayload) =>
+    requestJson<Classroom>("/classrooms", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  joinClassroom: (joinCode: string) =>
+    requestJson<{ classroom: Classroom; membership: { id: string; role: string; status: string } }>(
+      "/classrooms/join",
+      {
+        method: "POST",
+        body: JSON.stringify({ join_code: joinCode }),
+      },
+    ),
+  getClassroom: (classroomId: string) => requestJson<Classroom>(`/classrooms/${classroomId}`),
+  updateClassroom: (classroomId: string, payload: UpdateClassroomPayload) =>
+    requestJson<Classroom>(`/classrooms/${classroomId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  archiveClassroom: (classroomId: string) =>
+    requestJson<{ success: boolean }>(`/classrooms/${classroomId}`, {
+      method: "DELETE",
+    }),
+  regenerateJoinCode: (classroomId: string) =>
+    requestJson<Classroom>(`/classrooms/${classroomId}/regenerate-join-code`, {
+      method: "POST",
+    }),
+  listClassroomMembers: (classroomId: string) =>
+    requestJson<ClassroomMembersResponse>(`/classrooms/${classroomId}/members`),
+  removeClassroomMember: (classroomId: string, memberUserId: string) =>
+    requestJson<{ success: boolean }>(`/classrooms/${classroomId}/members/${memberUserId}`, {
+      method: "DELETE",
+    }),
 };
