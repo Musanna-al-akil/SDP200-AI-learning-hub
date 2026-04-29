@@ -9,9 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_async_session
 from app.guards import require_classroom_membership
-from app.models import Classroom, ClassroomMembership, File, User
-from app.schemas import FileDownloadResponse, FileListResponse, FileResponse
+from app.models import AIOutput, Classroom, ClassroomMembership, File, User
+from app.schemas import (
+    FileDownloadResponse,
+    FileListResponse,
+    FileResponse,
+    FileSummaryGenerateRequest,
+    FileSummaryResponse,
+)
 from app.storage import create_download_url
+from app.summary_service import SUMMARY_MODEL, SUMMARY_PROVIDER, generate_summary_from_text
 from app.users import current_active_user
 
 router = APIRouter(tags=["files"])
@@ -88,3 +95,126 @@ async def get_file_download_url(
     if item.content_type == "video/youtube":
         return FileDownloadResponse(url=item.storage_key)
     return FileDownloadResponse(url=create_download_url(item.storage_key))
+
+
+def _to_summary_response(item: AIOutput | None, file_id: UUID) -> FileSummaryResponse:
+    if item is None:
+        return FileSummaryResponse(state="empty", file_id=file_id)
+    state = item.status if item.status in {"pending", "completed", "failed"} else "empty"
+    return FileSummaryResponse(
+        state=state,
+        summary_id=item.id,
+        file_id=file_id,
+        content=item.content,
+        error_message=item.error_message,
+        provider=item.provider,
+        model=item.model,
+        updated_at=item.updated_at,
+    )
+
+
+async def _get_latest_summary(db: AsyncSession, file_id: UUID) -> AIOutput | None:
+    result = await db.execute(
+        select(AIOutput)
+        .where(AIOutput.file_id == file_id, AIOutput.type == "summary")
+        .order_by(AIOutput.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_latest_completed_summary(db: AsyncSession, file_id: UUID) -> AIOutput | None:
+    result = await db.execute(
+        select(AIOutput)
+        .where(AIOutput.file_id == file_id, AIOutput.type == "summary", AIOutput.status == "completed")
+        .order_by(AIOutput.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+@router.get("/files/{file_id}/summary", response_model=FileSummaryResponse)
+async def get_file_summary(
+    file_id: UUID,
+    db: db_dependency,
+    user: User = Depends(current_active_user),
+) -> FileSummaryResponse:
+    item = await _get_authorized_file(file_id, user.id, db)
+    summary = await _get_latest_completed_summary(db, item.id)
+    if summary is None:
+        summary = await _get_latest_summary(db, item.id)
+    return _to_summary_response(summary, item.id)
+
+
+@router.post("/files/{file_id}/summary", response_model=FileSummaryResponse)
+async def generate_file_summary(
+    file_id: UUID,
+    payload: FileSummaryGenerateRequest,
+    db: db_dependency,
+    user: User = Depends(current_active_user),
+) -> FileSummaryResponse:
+    item = await _get_authorized_file(file_id, user.id, db)
+    if item.content_type != "application/pdf":
+        raise _error(status.HTTP_400_BAD_REQUEST, "invalid_file_type", "Summaries are only available for PDF files.")
+    if item.processing_status != "completed":
+        raise _error(
+            status.HTTP_400_BAD_REQUEST,
+            "file_not_ready",
+            "Summary generation requires a processed PDF file.",
+        )
+    if not item.extracted_text or not item.extracted_text.strip():
+        raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "No extracted text found for this file.")
+
+    membership_role = await db.scalar(
+        select(ClassroomMembership.role).where(
+            ClassroomMembership.classroom_id == item.classroom_id,
+            ClassroomMembership.user_id == user.id,
+            ClassroomMembership.status == "active",
+        )
+    )
+    if membership_role not in ("creator", "member"):
+        raise _error(status.HTTP_403_FORBIDDEN, "forbidden", "You do not have access to this resource.")
+
+    existing = await _get_latest_summary(db, item.id)
+    existing_completed = await _get_latest_completed_summary(db, item.id)
+    if payload.regenerate and membership_role != "creator":
+        raise _error(status.HTTP_403_FORBIDDEN, "forbidden", "Only creators can regenerate summaries.")
+    if not payload.regenerate and existing_completed is not None:
+        return _to_summary_response(existing_completed, item.id)
+
+    should_create_new_row = payload.regenerate and existing_completed is not None
+    summary = (None if should_create_new_row else existing) or AIOutput(
+        classroom_id=item.classroom_id,
+        file_id=item.id,
+        created_by_id=user.id,
+        type="summary",
+    )
+    if should_create_new_row or existing is None:
+        db.add(summary)
+
+    summary.status = "pending"
+    summary.prompt = "Summarize extracted classroom PDF content."
+    summary.content = None
+    summary.error_message = None
+    summary.provider = SUMMARY_PROVIDER
+    summary.model = None
+    await db.commit()
+    await db.refresh(summary)
+
+    try:
+        content = generate_summary_from_text(item.extracted_text)
+        summary.status = "completed"
+        summary.content = content
+        summary.error_message = None
+        summary.provider = SUMMARY_PROVIDER
+        summary.model = SUMMARY_MODEL
+    except Exception as error:
+        summary.status = "failed"
+        summary.content = None
+        summary.error_message = str(error) or "Summary generation failed."
+        summary.provider = SUMMARY_PROVIDER
+        summary.model = SUMMARY_MODEL
+
+    await db.commit()
+    await db.refresh(summary)
+    return _to_summary_response(summary, item.id)

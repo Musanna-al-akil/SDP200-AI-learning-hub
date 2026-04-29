@@ -1,9 +1,11 @@
 "use client";
 
-import { CircleOffIcon, Link2Icon, PaperclipIcon, PlayCircleIcon, PlusIcon, UsersIcon } from "lucide-react";
+import { ChevronDownIcon, CircleOffIcon, Link2Icon, Loader2Icon, PaperclipIcon, PlayCircleIcon, PlusIcon, UsersIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 
 import { Button } from "@/components/shadcn/ui/button";
@@ -23,6 +25,7 @@ import {
   type ClassroomAnnouncement,
   type ClassroomFile,
   type ClassroomMember,
+  type FileSummary,
 } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-provider";
 
@@ -102,6 +105,9 @@ export default function ClassroomDetailPage() {
   const [isLoadingAnnouncements, setIsLoadingAnnouncements] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isPostingAnnouncement, setIsPostingAnnouncement] = useState(false);
+  const [summaryByFileId, setSummaryByFileId] = useState<Record<string, FileSummary>>({});
+  const [isSummaryLoadingByFileId, setIsSummaryLoadingByFileId] = useState<Record<string, boolean>>({});
+  const [isSummaryGeneratingByFileId, setIsSummaryGeneratingByFileId] = useState<Record<string, boolean>>({});
 
   const isCreator = classroom?.membership_role === "creator";
 
@@ -186,6 +192,34 @@ export default function ClassroomDetailPage() {
     return () => window.clearInterval(intervalId);
   }, [announcements, loadAnnouncements]);
 
+  useEffect(() => {
+    const summaryFileIds = announcements
+      .filter(
+        (announcement) =>
+          announcement.attachment?.type === "file" &&
+          announcement.attachment.file?.content_type === "application/pdf" &&
+          announcement.attachment.file.processing_status === "completed",
+      )
+      .map((announcement) => announcement.attachment?.file?.id)
+      .filter((value): value is string => Boolean(value));
+
+    const missingFileIds = summaryFileIds.filter((fileId) => summaryByFileId[fileId] === undefined);
+    if (missingFileIds.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      missingFileIds.map(async (fileId) => {
+        try {
+          const summary = await apiClient.getFileSummary(fileId);
+          setSummaryByFileId((previous) => ({ ...previous, [fileId]: summary }));
+        } catch {
+          // Keep UI usable even if one summary fetch fails.
+        }
+      }),
+    );
+  }, [announcements, summaryByFileId]);
+
   const resetAnnouncementComposer = () => {
     setAnnouncementBody("");
     setAttachmentType("none");
@@ -268,6 +302,8 @@ export default function ClassroomDetailPage() {
 
   const handleOpenFile = async (fileId: string) => {
     try {
+      const summary = await apiClient.getFileSummary(fileId);
+      setSummaryByFileId((previous) => ({ ...previous, [fileId]: summary }));
       const result = await apiClient.getFileDownloadUrl(fileId);
       window.open(result.url, "_blank", "noopener,noreferrer");
     } catch (error) {
@@ -288,6 +324,34 @@ export default function ClassroomDetailPage() {
 
     if ((announcement.attachment.type === "link" || announcement.attachment.type === "youtube") && announcement.attachment.url) {
       window.open(announcement.attachment.url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const handleLoadSummary = async (fileId: string) => {
+    setIsSummaryLoadingByFileId((previous) => ({ ...previous, [fileId]: true }));
+    try {
+      const summary = await apiClient.getFileSummary(fileId);
+      setSummaryByFileId((previous) => ({ ...previous, [fileId]: summary }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load summary";
+      toast.error(message);
+    } finally {
+      setIsSummaryLoadingByFileId((previous) => ({ ...previous, [fileId]: false }));
+    }
+  };
+
+  const handleGenerateSummary = async (fileId: string, regenerate = false) => {
+    setIsSummaryGeneratingByFileId((previous) => ({ ...previous, [fileId]: true }));
+    try {
+      const summary = await apiClient.generateFileSummary(fileId, { regenerate });
+      setSummaryByFileId((previous) => ({ ...previous, [fileId]: summary }));
+      toast.success(regenerate ? "Summary regenerated" : "Summary generated");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not generate summary";
+      toast.error(message);
+      await handleLoadSummary(fileId);
+    } finally {
+      setIsSummaryGeneratingByFileId((previous) => ({ ...previous, [fileId]: false }));
     }
   };
 
@@ -441,8 +505,18 @@ export default function ClassroomDetailPage() {
           ) : null}
 
           {!isLoadingAnnouncements
-            ? announcements.map((announcement) => (
-              <article className="rounded-xl border border-slate-200 bg-white shadow-sm" key={announcement.id}>
+            ? announcements.map((announcement) => {
+              const summaryFileId =
+                announcement.attachment?.type === "file" &&
+                announcement.attachment.file?.content_type === "application/pdf" &&
+                announcement.attachment.file.processing_status === "completed"
+                  ? announcement.attachment.file.id
+                  : null;
+              const isSummaryCompleted =
+                summaryFileId !== null && summaryByFileId[summaryFileId]?.state === "completed";
+
+              return (
+                <article className="rounded-xl border border-slate-200 bg-white shadow-sm" key={announcement.id}>
                 <div className="flex items-start gap-3 px-4 py-4">
                   <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-sky-700 text-sm font-semibold text-white">
                     {initialsFromName(announcement.created_by_name)}
@@ -455,43 +529,190 @@ export default function ClassroomDetailPage() {
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{announcement.body}</p>
 
                     {announcement.attachment ? (
-                      <button
-                        className="mt-3 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100"
-                        onClick={() => {
-                          void handleOpenAttachment(announcement);
-                        }}
-                        type="button"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-slate-800">
-                            {announcement.attachment.title ||
-                              (announcement.attachment.type === "file"
-                                ? announcement.attachment.file?.filename
-                                : announcement.attachment.url)}
-                          </p>
-                          <p className="mt-0.5 text-xs text-slate-500">
-                            {announcement.attachment.type === "file"
-                              ? getFileStatusLabel(announcement.attachment)
-                              : announcement.attachment.type === "youtube"
-                                ? "YouTube video"
-                                : "External link"}
-                          </p>
-                        </div>
-                        <div className="ml-3 text-slate-600">
-                          {announcement.attachment.type === "file" ? (
-                            <PaperclipIcon className="size-4" />
-                          ) : announcement.attachment.type === "youtube" ? (
-                            <PlayCircleIcon className="size-4" />
-                          ) : (
-                            <Link2Icon className="size-4" />
-                          )}
-                        </div>
-                      </button>
+                      <div className="mt-3 space-y-2">
+                        <button
+                          className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100"
+                          onClick={() => {
+                            void handleOpenAttachment(announcement);
+                          }}
+                          type="button"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-800">
+                              {announcement.attachment.title ||
+                                (announcement.attachment.type === "file"
+                                  ? announcement.attachment.file?.filename
+                                  : announcement.attachment.url)}
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {announcement.attachment.type === "file"
+                                ? getFileStatusLabel(announcement.attachment)
+                                : announcement.attachment.type === "youtube"
+                                  ? "YouTube video"
+                                  : "External link"}
+                            </p>
+                          </div>
+                          <div className="ml-3 text-slate-600">
+                            {announcement.attachment.type === "file" ? (
+                              <PaperclipIcon className="size-4" />
+                            ) : announcement.attachment.type === "youtube" ? (
+                              <PlayCircleIcon className="size-4" />
+                            ) : (
+                              <Link2Icon className="size-4" />
+                            )}
+                          </div>
+                        </button>
+
+                        {summaryFileId ? (
+                          <details
+                            className={`group rounded-lg border p-3 transition ${
+                              isSummaryCompleted
+                                ? "border-sky-300 bg-gradient-to-r from-sky-50 via-cyan-50 to-emerald-50 shadow-sm"
+                                : "border-slate-200 bg-white"
+                            } ${isSummaryGeneratingByFileId[summaryFileId] ? "ring-2 ring-sky-200/70" : ""}`}
+                          >
+                            <summary
+                              className={`flex cursor-pointer list-none items-center justify-between text-sm font-semibold ${
+                                isSummaryCompleted ? "text-sky-900" : "text-slate-800"
+                              }`}
+                            >
+                              <span>
+                                {summaryByFileId[summaryFileId]?.state === "completed"
+                                  ? "Summary available"
+                                  : "AI Summary"}
+                              </span>
+                              <ChevronDownIcon
+                                className={`size-4 transition group-open:rotate-180 ${
+                                  isSummaryCompleted ? "text-sky-600" : "text-slate-500"
+                                }`}
+                              />
+                            </summary>
+                            <div className="mt-2 flex items-center justify-end gap-2 summary-open-content">
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                  disabled={Boolean(isSummaryLoadingByFileId[summaryFileId])}
+                                  onClick={() => {
+                                    void handleLoadSummary(summaryFileId);
+                                  }}
+                                >
+                                  Refresh
+                                </Button>
+                                {isCreator ? (
+                                  <Button
+                                    size="sm"
+                                    type="button"
+                                    disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
+                                    onClick={() => {
+                                      void handleGenerateSummary(summaryFileId, true);
+                                    }}
+                                  >
+                                    {isSummaryGeneratingByFileId[summaryFileId] ? (
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <Loader2Icon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                                        Regenerating...
+                                      </span>
+                                    ) : (
+                                      "Regenerate"
+                                    )}
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            {isSummaryLoadingByFileId[summaryFileId] ? (
+                              <p className="mt-2 text-sm text-slate-500">Loading summary...</p>
+                            ) : null}
+
+                            {!isSummaryLoadingByFileId[summaryFileId] &&
+                            !summaryByFileId[summaryFileId] ? (
+                              <div className="mt-2 space-y-2">
+                                <p className="text-sm text-slate-500">No summary loaded yet.</p>
+                                <Button
+                                  size="sm"
+                                  type="button"
+                                  disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
+                                  onClick={() => {
+                                    void handleGenerateSummary(summaryFileId);
+                                  }}
+                                >
+                                  Generate summary
+                                </Button>
+                              </div>
+                            ) : null}
+
+                            {summaryByFileId[summaryFileId]?.state === "empty" ? (
+                              <div className="mt-2 space-y-2">
+                                <p className="text-sm text-slate-500">No summary available yet.</p>
+                                <Button
+                                  size="sm"
+                                  type="button"
+                                  disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
+                                  onClick={() => {
+                                    void handleGenerateSummary(summaryFileId);
+                                  }}
+                                >
+                                  Generate summary
+                                </Button>
+                              </div>
+                            ) : null}
+
+                            {summaryByFileId[summaryFileId]?.state === "pending" ? (
+                              <p className="mt-2 text-sm text-slate-500">Summary generation in progress...</p>
+                            ) : null}
+
+                            {summaryByFileId[summaryFileId]?.state === "failed" ? (
+                              <div className="mt-2 space-y-2">
+                                <p className="text-sm text-rose-600">
+                                  {summaryByFileId[summaryFileId]?.error_message ?? "Summary generation failed."}
+                                </p>
+                                <Button
+                                  size="sm"
+                                  type="button"
+                                  disabled={Boolean(isSummaryGeneratingByFileId[summaryFileId])}
+                                  onClick={() => {
+                                    void handleGenerateSummary(summaryFileId);
+                                  }}
+                                >
+                                  Retry
+                                </Button>
+                              </div>
+                            ) : null}
+
+                            {summaryByFileId[summaryFileId]?.state === "completed" ? (
+                              <div
+                                className="summary-open-content mt-2 overflow-x-auto text-sm leading-6 text-slate-700
+                                  [&_a]:text-sky-700 [&_a]:underline
+                                  [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-600
+                                  [&_code]:rounded [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs
+                                  [&_h1]:mt-4 [&_h1]:text-xl [&_h1]:font-semibold
+                                  [&_h2]:mt-4 [&_h2]:text-lg [&_h2]:font-semibold
+                                  [&_h3]:mt-3 [&_h3]:text-base [&_h3]:font-semibold
+                                  [&_li]:mb-1
+                                  [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5
+                                  [&_p]:mb-2
+                                  [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-100 [&_pre]:p-3
+                                  [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_table]:text-left
+                                  [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1
+                                  [&_th]:border [&_th]:border-slate-200 [&_th]:bg-slate-100 [&_th]:px-2 [&_th]:py-1 [&_th]:font-medium
+                                  [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
+                              >
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {summaryByFileId[summaryFileId]?.content ?? ""}
+                                </ReactMarkdown>
+                              </div>
+                            ) : null}
+                          </details>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 </div>
               </article>
-            ))
+              );
+            })
             : null}
         </section>
       </div>

@@ -151,6 +151,19 @@ export type ClassroomFilesResponse = {
   files: ClassroomFile[];
 };
 
+export type FileSummaryState = "empty" | "pending" | "completed" | "failed";
+
+export type FileSummary = {
+  state: FileSummaryState;
+  summary_id: string | null;
+  file_id: string;
+  content: string | null;
+  error_message: string | null;
+  provider: string | null;
+  model: string | null;
+  updated_at: string | null;
+};
+
 export type AnnouncementAttachmentFile = {
   id: string;
   filename: string;
@@ -297,4 +310,10 @@ export const apiClient = {
   },
   getFile: (fileId: string) => requestJson<ClassroomFile>(`/files/${fileId}`),
   getFileDownloadUrl: (fileId: string) => requestJson<{ url: string }>(`/files/${fileId}/download`),
+  getFileSummary: (fileId: string) => requestJson<FileSummary>(`/files/${fileId}/summary`),
+  generateFileSummary: (fileId: string, payload?: { regenerate?: boolean }) =>
+    requestJson<FileSummary>(`/files/${fileId}/summary`, {
+      method: "POST",
+      body: JSON.stringify({ regenerate: Boolean(payload?.regenerate) }),
+    }),
 };

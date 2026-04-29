@@ -108,6 +108,21 @@ class FileDownloadResponse(BaseModel):
     url: str
 
 
+class FileSummaryGenerateRequest(BaseModel):
+    regenerate: bool = False
+
+
+class FileSummaryResponse(BaseModel):
+    state: Literal["empty", "pending", "completed", "failed"]
+    summary_id: UUID | None = None
+    file_id: UUID
+    content: str | None = None
+    error_message: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    updated_at: datetime | None = None
+
+
 class AnnouncementAttachmentFileResponse(BaseModel):
     id: UUID
     filename: str
