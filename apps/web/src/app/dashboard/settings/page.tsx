@@ -91,71 +91,73 @@ export default function SettingsPage() {
         <p className="text-sm text-muted-foreground">Manage your profile and account security.</p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Profile</CardTitle>
-          <CardDescription>Update the name shown across your classrooms.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-4" onSubmit={handleProfileSubmit}>
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="settings-name">
-                Name
-              </label>
-              <Input
-                id="settings-name"
-                maxLength={255}
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </div>
-            <Button disabled={isSavingProfile} type="submit">
-              {isSavingProfile ? "Saving..." : "Save profile"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="md:h-full">
+          <CardHeader>
+            <CardTitle>Profile</CardTitle>
+            <CardDescription>Update the name shown across your classrooms.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4" onSubmit={handleProfileSubmit}>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="settings-name">
+                  Name
+                </label>
+                <Input
+                  id="settings-name"
+                  maxLength={255}
+                  required
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </div>
+              <Button disabled={isSavingProfile} type="submit">
+                {isSavingProfile ? "Saving..." : "Save profile"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Security</CardTitle>
-          <CardDescription>Change your password by confirming your current password first.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-4" onSubmit={handlePasswordSubmit}>
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="settings-current-password">
-                Current password
-              </label>
-              <Input
-                id="settings-current-password"
-                minLength={8}
-                required
-                type="password"
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="settings-new-password">
-                New password
-              </label>
-              <Input
-                id="settings-new-password"
-                minLength={8}
-                required
-                type="password"
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-              />
-            </div>
-            <Button disabled={isSavingPassword} type="submit">
-              {isSavingPassword ? "Updating..." : "Update password"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+        <Card className="md:h-full">
+          <CardHeader>
+            <CardTitle>Security</CardTitle>
+            <CardDescription>Change your password by confirming your current password first.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4" onSubmit={handlePasswordSubmit}>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="settings-current-password">
+                  Current password
+                </label>
+                <Input
+                  id="settings-current-password"
+                  minLength={8}
+                  required
+                  type="password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="settings-new-password">
+                  New password
+                </label>
+                <Input
+                  id="settings-new-password"
+                  minLength={8}
+                  required
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                />
+              </div>
+              <Button disabled={isSavingPassword} type="submit">
+                {isSavingPassword ? "Updating..." : "Update password"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }
