@@ -96,6 +96,7 @@ class FileResponse(BaseModel):
     content_type: str
     size_bytes: int
     processing_status: str
+    processing_error: str | None
     created_at: datetime
 
 
@@ -114,6 +115,7 @@ class AnnouncementAttachmentFileResponse(BaseModel):
     content_type: str
     size_bytes: int
     processing_status: str
+    processing_error: str | None
 
 
 class AnnouncementAttachmentResponse(BaseModel):

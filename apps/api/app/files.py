@@ -31,6 +31,7 @@ def _to_file_response(item: File) -> FileResponse:
         content_type=item.content_type,
         size_bytes=item.size_bytes,
         processing_status=item.processing_status,
+        processing_error=item.processing_error,
         created_at=item.created_at,
     )
 

@@ -143,6 +143,7 @@ export type ClassroomFile = {
   content_type: string;
   size_bytes: number;
   processing_status: string;
+  processing_error: string | null;
   created_at: string;
 };
 
@@ -157,6 +158,7 @@ export type AnnouncementAttachmentFile = {
   content_type: string;
   size_bytes: number;
   processing_status: string;
+  processing_error: string | null;
 };
 
 export type AnnouncementAttachment = {

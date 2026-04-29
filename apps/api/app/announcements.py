@@ -4,12 +4,13 @@ from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File as FastAPIFile, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File as FastAPIFile, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_async_session
+from app.document_processing import process_pdf_file
 from app.guards import require_classroom_membership, require_creator
 from app.models import Announcement, Classroom, File, User
 from app.schemas import (
@@ -67,6 +68,7 @@ def _attachment_from_row(item: Announcement, file_item: File | None) -> Announce
                 content_type=file_item.content_type,
                 size_bytes=file_item.size_bytes,
                 processing_status=file_item.processing_status,
+                processing_error=file_item.processing_error,
             ),
         )
 
@@ -128,6 +130,7 @@ async def list_classroom_announcements(
 @router.post("/classrooms/{classroom_id}/announcements", response_model=AnnouncementResponse, status_code=status.HTTP_201_CREATED)
 async def create_classroom_announcement(
     classroom_id: UUID,
+    background_tasks: BackgroundTasks,
     db: db_dependency,
     user: User = Depends(current_active_user),
     _: str = Depends(require_creator),
@@ -196,7 +199,7 @@ async def create_classroom_announcement(
             storage_key=storage_key,
             content_type=content_type,
             size_bytes=len(file_bytes),
-            processing_status="pending" if content_type == "application/pdf" else "not_applicable",
+            processing_status="processing" if content_type == "application/pdf" else "not_applicable",
         )
         db.add(created_file)
         await db.flush()
@@ -246,5 +249,7 @@ async def create_classroom_announcement(
     await db.refresh(announcement)
     if created_file is not None:
         await db.refresh(created_file)
+        if created_file.content_type == "application/pdf":
+            background_tasks.add_task(process_pdf_file, created_file.id, file_bytes)
 
     return _to_announcement_response(announcement, user.name, created_file)

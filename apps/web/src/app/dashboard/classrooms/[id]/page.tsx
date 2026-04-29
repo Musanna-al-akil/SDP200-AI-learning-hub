@@ -1,9 +1,9 @@
 "use client";
 
+import { CircleOffIcon, Link2Icon, PaperclipIcon, PlayCircleIcon, PlusIcon, UsersIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { CircleOffIcon, Link2Icon, PaperclipIcon, PlayCircleIcon, PlusIcon, UsersIcon } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/shadcn/ui/button";
@@ -21,11 +21,14 @@ import {
   apiClient,
   type Classroom,
   type ClassroomAnnouncement,
+  type ClassroomFile,
   type ClassroomMember,
 } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-provider";
 
 type AttachmentComposerType = "none" | "file" | "link" | "youtube";
+
+const PDF_PROCESSING_POLL_MS = 1500;
 
 function formatPostedAt(value: string): string {
   const date = new Date(value);
@@ -44,6 +47,34 @@ function initialsFromName(name: string): string {
     return words[0].slice(0, 1).toUpperCase();
   }
   return `${words[0][0]}${words[1][0]}`.toUpperCase();
+}
+
+function getFileStatusLabel(attachment: ClassroomAnnouncement["attachment"]): string {
+  if (attachment?.type !== "file" || !attachment.file) {
+    return "";
+  }
+
+  if (attachment.file.content_type !== "application/pdf") {
+    return attachment.file.content_type;
+  }
+
+  if (attachment.file.processing_status === "processing") {
+    return "Processing PDF...";
+  }
+
+  if (attachment.file.processing_status === "completed") {
+    return "PDF processed";
+  }
+
+  if (attachment.file.processing_status === "failed") {
+    return "PDF processing failed";
+  }
+
+  return "PDF";
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 export default function ClassroomDetailPage() {
@@ -79,7 +110,7 @@ export default function ClassroomDetailPage() {
     [members],
   );
 
-  const loadAnnouncements = async () => {
+  const loadAnnouncements = useCallback(async () => {
     setIsLoadingAnnouncements(true);
     try {
       const result = await apiClient.listClassroomAnnouncements(classroomId);
@@ -90,6 +121,15 @@ export default function ClassroomDetailPage() {
     } finally {
       setIsLoadingAnnouncements(false);
     }
+  }, [classroomId]);
+
+  const waitForPdfProcessing = async (fileId: string): Promise<ClassroomFile> => {
+    let currentFile = await apiClient.getFile(fileId);
+    while (currentFile.processing_status === "processing") {
+      await sleep(PDF_PROCESSING_POLL_MS);
+      currentFile = await apiClient.getFile(fileId);
+    }
+    return currentFile;
   };
 
   useEffect(() => {
@@ -126,6 +166,25 @@ export default function ClassroomDetailPage() {
 
     void loadData();
   }, [classroomId, isAuthenticated, isLoading, router]);
+
+  useEffect(() => {
+    const hasProcessingPdf = announcements.some(
+      (announcement) =>
+        announcement.attachment?.type === "file" &&
+        announcement.attachment.file?.content_type === "application/pdf" &&
+        announcement.attachment.file.processing_status === "processing",
+    );
+
+    if (!hasProcessingPdf) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadAnnouncements();
+    }, 3000);
+
+    return () => window.clearInterval(intervalId);
+  }, [announcements, loadAnnouncements]);
 
   const resetAnnouncementComposer = () => {
     setAnnouncementBody("");
@@ -179,13 +238,22 @@ export default function ClassroomDetailPage() {
 
     setIsPostingAnnouncement(true);
     try {
-      await apiClient.createClassroomAnnouncement(classroomId, {
+      const announcement = await apiClient.createClassroomAnnouncement(classroomId, {
         body: announcementBody,
         attachmentType: attachmentType === "none" ? undefined : attachmentType,
         attachmentTitle: attachmentTitle.trim() || undefined,
         attachmentUrl: attachmentUrl.trim() || undefined,
         file: attachmentType === "file" ? attachmentFile ?? undefined : undefined,
       });
+
+      const attachedFile = announcement.attachment?.type === "file" ? announcement.attachment.file : null;
+      if (attachedFile?.content_type === "application/pdf" && attachedFile.processing_status === "processing") {
+        const processedFile = await waitForPdfProcessing(attachedFile.id);
+        if (processedFile.processing_status === "failed") {
+          toast.error(processedFile.processing_error ?? "PDF processing failed");
+        }
+      }
+
       resetAnnouncementComposer();
       setIsAnnouncementModalOpen(false);
       await loadAnnouncements();
@@ -403,7 +471,7 @@ export default function ClassroomDetailPage() {
                           </p>
                           <p className="mt-0.5 text-xs text-slate-500">
                             {announcement.attachment.type === "file"
-                              ? `${announcement.attachment.file?.content_type ?? "file"}`
+                              ? getFileStatusLabel(announcement.attachment)
                               : announcement.attachment.type === "youtube"
                                 ? "YouTube video"
                                 : "External link"}
@@ -431,13 +499,16 @@ export default function ClassroomDetailPage() {
       <Dialog
         open={isAnnouncementModalOpen}
         onOpenChange={(open) => {
+          if (isPostingAnnouncement) {
+            return;
+          }
           setIsAnnouncementModalOpen(open);
           if (!open) {
             resetAnnouncementComposer();
           }
         }}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-lg!">
           <DialogHeader>
             <DialogTitle>Announcement</DialogTitle>
             <DialogDescription>Post an update to this classroom stream.</DialogDescription>
@@ -451,17 +522,18 @@ export default function ClassroomDetailPage() {
               <Textarea
                 id="announcement-body"
                 placeholder="Announce something to your class"
-                rows={6}
+                rows={10}
                 value={announcementBody}
                 onChange={(event) => setAnnouncementBody(event.target.value)}
+                className="h-28 resize"
               />
             </div>
 
             <div className="space-y-2">
               <p className="text-sm font-medium text-slate-700">Attachment (optional)</p>
-              <div className="grid gap-2 sm:grid-cols-4">
+              <div className="flex flex-wrap gap-2">
                 <Button
-                  className="gap-2"
+                  className="min-w-[100px] gap-2"
                   onClick={() => setAttachmentType("none")}
                   type="button"
                   variant={attachmentType === "none" ? "default" : "outline"}
@@ -470,7 +542,7 @@ export default function ClassroomDetailPage() {
                   None
                 </Button>
                 <Button
-                  className="gap-2"
+                  className="min-w-[100px] gap-2"
                   onClick={() => setAttachmentType("file")}
                   type="button"
                   variant={attachmentType === "file" ? "default" : "outline"}
@@ -479,7 +551,7 @@ export default function ClassroomDetailPage() {
                   File
                 </Button>
                 <Button
-                  className="gap-2"
+                  className="min-w-[100px] gap-2"
                   onClick={() => setAttachmentType("link")}
                   type="button"
                   variant={attachmentType === "link" ? "default" : "outline"}
@@ -488,7 +560,7 @@ export default function ClassroomDetailPage() {
                   Link
                 </Button>
                 <Button
-                  className="gap-2"
+                  className="min-w-[120px] gap-2"
                   onClick={() => setAttachmentType("youtube")}
                   type="button"
                   variant={attachmentType === "youtube" ? "default" : "outline"}
@@ -535,13 +607,18 @@ export default function ClassroomDetailPage() {
                   setIsAnnouncementModalOpen(false);
                   resetAnnouncementComposer();
                 }}
+                disabled={isPostingAnnouncement}
                 type="button"
                 variant="outline"
               >
                 Cancel
               </Button>
               <Button disabled={isPostingAnnouncement} type="submit">
-                {isPostingAnnouncement ? "Posting..." : "Announce"}
+                {isPostingAnnouncement && attachmentFile?.type === "application/pdf"
+                  ? "Processing PDF..."
+                  : isPostingAnnouncement
+                    ? "Posting..."
+                    : "Announce"}
               </Button>
             </DialogFooter>
           </form>
