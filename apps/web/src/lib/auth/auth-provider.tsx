@@ -13,13 +13,25 @@ import {
   type LoginPayload,
   type RegisterPayload,
 } from "@/lib/api/client";
+import { buildUserAvatarUrl } from "@/lib/avatar";
+
+export type AuthUserWithAvatar = AuthUser & {
+  avatarUrl: string;
+};
+
+function withAvatar(user: AuthUser): AuthUserWithAvatar {
+  return {
+    ...user,
+    avatarUrl: buildUserAvatarUrl(user.name),
+  };
+}
 
 type AuthContextValue = {
-  user: AuthUser | null;
+  user: AuthUserWithAvatar | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (payload: LoginPayload) => Promise<AuthUser>;
-  register: (payload: RegisterPayload) => Promise<AuthUser>;
+  login: (payload: LoginPayload) => Promise<AuthUserWithAvatar>;
+  register: (payload: RegisterPayload) => Promise<AuthUserWithAvatar>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
 };
@@ -27,7 +39,7 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUserWithAvatar | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshMe = useCallback(async () => {
@@ -41,7 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const me = await apiClient.me();
-      setUser(me);
+      setUser(withAvatar(me));
     } catch {
       clearStoredToken();
       setUser(null);
@@ -57,15 +69,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (payload: LoginPayload) => {
     const result = await apiClient.login(payload);
     setStoredToken(result.token);
-    setUser(result.user);
-    return result.user;
+    const userWithAvatar = withAvatar(result.user);
+    setUser(userWithAvatar);
+    return userWithAvatar;
   }, []);
 
   const register = useCallback(async (payload: RegisterPayload) => {
     const result = await apiClient.register(payload);
     setStoredToken(result.token);
-    setUser(result.user);
-    return result.user;
+    const userWithAvatar = withAvatar(result.user);
+    setUser(userWithAvatar);
+    return userWithAvatar;
   }, []);
 
   const logout = useCallback(async () => {

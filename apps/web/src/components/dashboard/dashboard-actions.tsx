@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { LogOutIcon, PlusIcon, UserCircle2Icon, UsersIcon } from "lucide-react";
 
 import { Button } from "@/components/shadcn/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/shadcn/ui/avatar";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import { Input } from "@/components/shadcn/ui/input";
 import { Textarea } from "@/components/shadcn/ui/textarea";
 import { SidebarMenuButton } from "@/components/shadcn/ui/sidebar";
 import { apiClient } from "@/lib/api/client";
+import { getInitials } from "@/lib/avatar";
 import { useAuth } from "@/lib/auth/auth-provider";
 
 import { useClassrooms } from "@/components/dashboard/classrooms-context";
@@ -37,6 +39,7 @@ type DashboardActionsProps = {
 export function DashboardActions({ variant }: DashboardActionsProps) {
   const router = useRouter();
   const { user, logout } = useAuth();
+  const userInitials = getInitials(user?.name);
   const { refreshClassrooms } = useClassrooms();
 
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
@@ -146,13 +149,28 @@ export function DashboardActions({ variant }: DashboardActionsProps) {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button aria-label="Account menu" size="icon" variant="ghost">
-                <UserCircle2Icon className="size-5" />
+                {user ? (
+                  <Avatar className="size-7">
+                    <AvatarImage src={user.avatarUrl} alt={user.name} />
+                    <AvatarFallback>{userInitials}</AvatarFallback>
+                  </Avatar>
+                ) : (
+                  <UserCircle2Icon className="size-5" />
+                )}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel className="space-y-0.5">
-                <p className="text-sm font-medium">{user?.name ?? "User"}</p>
-                <p className="text-xs text-muted-foreground">{user?.email ?? ""}</p>
+              <DropdownMenuLabel className="p-0 font-normal">
+                <div className="flex items-center gap-2 px-2 py-1.5">
+                  <Avatar className="size-8">
+                    <AvatarImage src={user?.avatarUrl} alt={user?.name ?? "User"} />
+                    <AvatarFallback>{userInitials}</AvatarFallback>
+                  </Avatar>
+                  <div className="grid flex-1 text-left leading-tight">
+                    <p className="truncate text-sm font-medium">{user?.name ?? "User"}</p>
+                    <p className="truncate text-xs text-muted-foreground">{user?.email ?? ""}</p>
+                  </div>
+                </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled={isLoggingOut} onSelect={() => void handleLogout()}>
