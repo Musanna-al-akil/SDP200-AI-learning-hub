@@ -191,6 +191,12 @@ export type LoginPayload = {
   password: string;
 };
 
+export type UpdateMePayload = {
+  name?: string;
+  current_password?: string;
+  new_password?: string;
+};
+
 export type CreateClassroomPayload = {
   name: string;
   description?: string;
@@ -218,6 +224,11 @@ export const apiClient = {
       method: "POST",
     }),
   me: () => requestJson<AuthUser>("/auth/me"),
+  updateMe: (payload: UpdateMePayload) =>
+    requestJson<AuthUser>("/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   listClassrooms: () => requestJson<ClassroomListResponse>("/classrooms"),
   createClassroom: (payload: CreateClassroomPayload) =>
     requestJson<Classroom>("/classrooms", {

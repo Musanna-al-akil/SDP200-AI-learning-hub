@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { DashboardActions, SidebarLogoutAction } from "@/components/dashboard/dashboard-actions";
+import { DashboardActions, SidebarLogoutAction, SidebarSettingsAction } from "@/components/dashboard/dashboard-actions";
 import { useClassrooms } from "@/components/dashboard/classrooms-context";
 import {
   DropdownMenu,
@@ -227,6 +227,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
       <SidebarFooter className="border-t border-sidebar-border/60 pt-2">
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarSettingsAction />
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarLogoutAction />
           </SidebarMenuItem>

@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { LogOutIcon, PlusIcon, UserCircle2Icon, UsersIcon } from "lucide-react";
+import { LogOutIcon, PlusIcon, SettingsIcon, UserCircle2Icon, UsersIcon } from "lucide-react";
 
 import { Button } from "@/components/shadcn/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/shadcn/ui/avatar";
@@ -173,6 +174,12 @@ export function DashboardActions({ variant }: DashboardActionsProps) {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/dashboard/settings">
+                  <SettingsIcon />
+                  Settings
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuItem disabled={isLoggingOut} onSelect={() => void handleLogout()}>
                 <LogOutIcon />
                 {isLoggingOut ? "Logging out..." : "Logout"}
@@ -236,6 +243,17 @@ export function DashboardActions({ variant }: DashboardActionsProps) {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+export function SidebarSettingsAction() {
+  return (
+    <SidebarMenuButton asChild>
+      <Link href="/dashboard/settings">
+        <SettingsIcon />
+        <span>Settings</span>
+      </Link>
+    </SidebarMenuButton>
   );
 }
 
