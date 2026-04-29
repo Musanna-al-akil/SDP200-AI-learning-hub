@@ -1,9 +1,10 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
+import { ArchiveIcon, CopyIcon, MoreVerticalIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import * as React from "react";
-import { ArchiveIcon, CopyIcon, MoreVerticalIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { useClassrooms } from "@/components/dashboard/classrooms-context";
@@ -50,18 +51,18 @@ function ClassroomBoardCard({
   };
 
   return (
-    <Card className="group w-full max-w-[22rem] overflow-hidden rounded-xl border-border/70 bg-card p-0 transition duration-200 hover:-translate-y-0.5 hover:shadow-md">
+    <Card className="group w-full max-w-[20rem] overflow-hidden rounded-xl border-border/70 bg-card p-0 transition duration-200 hover:-translate-y-0.5 hover:shadow-md">
       <Link href={`/dashboard/classrooms/${classroom.id}`}>
         <div className={`relative h-28 bg-gradient-to-r ${accent} px-4 py-3 text-white`}>
           <p className="line-clamp-2 text-3xl font-semibold tracking-tight" style={{ fontSize: "1.85rem", lineHeight: "2rem" }}>
             {classroom.name}
           </p>
           <p className="mt-1 text-sm text-white/90">
-            {classroom.description?.trim() || (classroom.membership_role === "creator" ? "Created by you" : "Joined classroom")}
+            {classroom.description?.trim()}
           </p>
-          <p className="text-xs font-medium text-white/85">Teacher: {teacherLabel}</p>
+          <p className="text-xs font-medium text-white/85">Creator: {teacherLabel}</p>
           <span className="absolute right-4 bottom-[-18px] inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/95 text-sm font-semibold text-slate-700 shadow-sm">
-            {classroom.name.slice(0, 1).toUpperCase()}
+            <img src={"https://api.dicebear.com/9.x/adventurer/svg?seed=" + classroom.creator_name} alt={classroom.name} className="size-full group-hover:scale-120" />
           </span>
         </div>
 
@@ -171,7 +172,7 @@ export default function DashboardPage() {
       ) : null}
 
       <section>
-        <div className="grid justify-start gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,22rem))]">
+        <div className="grid justify-start gap-4 [grid-template-columns:repeat(auto-fill,minmax(16rem,20rem))]">
           {classrooms.map((classroom, index) => (
             <ClassroomBoardCard
               classroom={classroom}
