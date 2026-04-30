@@ -40,7 +40,10 @@ export function ClassroomsProvider({ children }: { children: React.ReactNode }) 
     if (isLoading || !isAuthenticated) {
       return;
     }
-    void refreshClassrooms();
+    const timeoutId = window.setTimeout(() => {
+      void refreshClassrooms();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [isAuthenticated, isLoading, refreshClassrooms]);
 
   const value = React.useMemo<ClassroomsContextValue>(

@@ -15,12 +15,21 @@ import { toast } from "sonner";
 
 import { DashboardActions, SidebarLogoutAction, SidebarSettingsAction } from "@/components/dashboard/dashboard-actions";
 import { useClassrooms } from "@/components/dashboard/classrooms-context";
+import { Button } from "@/components/shadcn/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/shadcn/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/shadcn/ui/dialog";
 import { apiClient, type Classroom } from "@/lib/api/client";
 import {
   Sidebar,
@@ -69,6 +78,7 @@ function ClassroomLinkItem({ classroom }: { classroom: Classroom }) {
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { classrooms, isLoadingClassrooms, refreshClassrooms } = useClassrooms();
   const [archivingId, setArchivingId] = React.useState<string | null>(null);
+  const [classroomToArchive, setClassroomToArchive] = React.useState<Classroom | null>(null);
 
   const createdClasses = React.useMemo(
     () => classrooms.filter((classroom) => classroom.membership_role === "creator"),
@@ -80,15 +90,17 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   );
   const hasCreatorClasses = createdClasses.length > 0;
 
-  const handleArchive = async (classroom: Classroom) => {
-    if (!window.confirm(`Archive "${classroom.name}"?`)) {
+  const handleArchive = async () => {
+    if (!classroomToArchive) {
       return;
     }
+    const classroom = classroomToArchive;
     setArchivingId(classroom.id);
     try {
       await apiClient.archiveClassroom(classroom.id);
       toast.success("Classroom archived");
       await refreshClassrooms();
+      setClassroomToArchive(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Archive failed";
       toast.error(message);
@@ -146,7 +158,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         disabled={archivingId === classroom.id}
                         key={classroom.id}
                         onSelect={() => {
-                          void handleArchive(classroom);
+                          setClassroomToArchive(classroom);
                         }}
                       >
                         <ArchiveIcon />
@@ -235,6 +247,46 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
+
+      <Dialog
+        open={Boolean(classroomToArchive)}
+        onOpenChange={(open) => {
+          if (!open && !archivingId) {
+            setClassroomToArchive(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Archive classroom?</DialogTitle>
+            <DialogDescription>
+              {classroomToArchive
+                ? `This will archive "${classroomToArchive.name}" and remove it from active classrooms.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              disabled={Boolean(archivingId)}
+              onClick={() => setClassroomToArchive(null)}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={Boolean(archivingId)}
+              onClick={() => {
+                void handleArchive();
+              }}
+              type="button"
+              variant="destructive"
+            >
+              {archivingId ? "Archiving..." : "Archive classroom"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sidebar>
   );
 }

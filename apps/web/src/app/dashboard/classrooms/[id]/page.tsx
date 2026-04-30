@@ -1,7 +1,26 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { BrainCircuitIcon, CheckIcon, ChevronDownIcon, CircleOffIcon, CopyIcon, Link2Icon, Loader2Icon, MessageSquareTextIcon, PaperclipIcon, PlayCircleIcon, PlusIcon, SendHorizontalIcon, SparklesIcon, UsersIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  BookOpenTextIcon,
+  BrainCircuitIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CircleOffIcon,
+  CopyIcon,
+  FileTextIcon,
+  Link2Icon,
+  Loader2Icon,
+  MegaphoneIcon,
+  MessageSquareTextIcon,
+  PaperclipIcon,
+  PlayCircleIcon,
+  PlusIcon,
+  SendHorizontalIcon,
+  SparklesIcon,
+  UsersIcon,
+} from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -18,6 +37,7 @@ import {
   DialogTitle,
 } from "@/components/shadcn/ui/dialog";
 import { Input } from "@/components/shadcn/ui/input";
+import { Skeleton } from "@/components/shadcn/ui/skeleton";
 import { Textarea } from "@/components/shadcn/ui/textarea";
 import {
   apiClient,
@@ -124,6 +144,55 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+function ClassroomLoadingState() {
+  return (
+    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
+      <Skeleton className="h-40 rounded-2xl" />
+      <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="space-y-4">
+          <Skeleton className="h-28 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-56 rounded-xl" />
+        </aside>
+        <section className="space-y-4">
+          <Skeleton className="h-16 rounded-xl" />
+          {Array.from({ length: 3 }).map((_, index) => (
+            <Skeleton className="h-44 rounded-xl" key={index} />
+          ))}
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function EmptyStreamState({
+  isCreator,
+  onCreate,
+}: {
+  isCreator: boolean;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center shadow-sm">
+      <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-sky-50 text-sky-700 ring-1 ring-sky-100">
+        <MegaphoneIcon className="size-6" />
+      </div>
+      <h2 className="mt-5 text-xl font-semibold tracking-tight text-slate-950">No announcements yet</h2>
+      <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-600">
+        {isCreator
+          ? "Share an update, PDF, image, link, or video to start the class stream."
+          : "Announcements and shared materials will appear here once the creator posts them."}
+      </p>
+      {isCreator ? (
+        <Button className="mt-5 gap-2" onClick={onCreate} type="button">
+          <PlusIcon className="size-4" />
+          New announcement
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ClassroomDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -148,6 +217,8 @@ export default function ClassroomDetailPage() {
   const [isLoadingPage, setIsLoadingPage] = useState(true);
   const [isLoadingAnnouncements, setIsLoadingAnnouncements] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
+  const [isArchivingClassroom, setIsArchivingClassroom] = useState(false);
   const [isPostingAnnouncement, setIsPostingAnnouncement] = useState(false);
   const [summaryByFileId, setSummaryByFileId] = useState<Record<string, FileSummary>>({});
   const [isSummaryLoadingByFileId, setIsSummaryLoadingByFileId] = useState<Record<string, boolean>>({});
@@ -610,16 +681,17 @@ export default function ClassroomDetailPage() {
     if (!isCreator || !classroom) {
       return;
     }
-    if (!window.confirm("Archive this classroom?")) {
-      return;
-    }
+    setIsArchivingClassroom(true);
     try {
       await apiClient.archiveClassroom(classroom.id);
       toast.success("Classroom archived");
+      setIsArchiveConfirmOpen(false);
       router.replace("/dashboard");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Archive failed";
       toast.error(message);
+    } finally {
+      setIsArchivingClassroom(false);
     }
   };
 
@@ -655,31 +727,43 @@ export default function ClassroomDetailPage() {
   };
 
   if (isLoading || !isAuthenticated || isLoadingPage) {
-    return <main className="p-8 text-sm text-muted-foreground">Loading classroom...</main>;
+    return <ClassroomLoadingState />;
   }
 
   if (!classroom) {
-    return <main className="p-8 text-sm text-muted-foreground">Classroom not found.</main>;
+    return (
+      <main className="mx-auto flex min-h-[60svh] w-full max-w-3xl items-center justify-center px-4 py-10">
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <AlertCircleIcon className="mx-auto size-8 text-slate-500" />
+          <h1 className="mt-4 text-xl font-semibold text-slate-950">Classroom not found</h1>
+          <p className="mt-2 text-sm text-slate-600">The class may have been archived or you may no longer have access.</p>
+        </div>
+      </main>
+    );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6">
-      <section className="relative overflow-hidden rounded-2xl border border-slate-300 bg-gradient-to-r from-slate-600 via-slate-700 to-slate-800 px-6 py-8 text-white shadow-sm">
+    <main className="page-enter mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 bg-[#f8f8f4] px-4 py-6 md:px-6">
+      <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-700 via-teal-800 to-slate-800 px-5 py-7 text-white shadow-sm md:px-6 md:py-8">
         <div className="absolute right-6 top-6 hidden rounded-full border border-white/25 bg-white/10 px-4 py-1.5 text-xs font-medium backdrop-blur sm:block">
           Stream
         </div>
-        <h1 className="text-3xl font-semibold tracking-tight">{classroom.name}</h1>
-        <p className="mt-2 max-w-3xl text-sm text-slate-100/90">
+        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium capitalize text-white/90">
+          <BookOpenTextIcon className="size-3.5" />
+          {classroom.membership_role}
+        </div>
+        <h1 className="max-w-4xl text-3xl font-semibold tracking-tight md:text-4xl">{classroom.name}</h1>
+        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-100/90">
           {classroom.description?.trim() || "Classroom stream for announcements and shared materials."}
         </p>
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="space-y-4">
+        <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Class code</p>
             <div className="flex items-center justify-between gap-3">
-              <p className="mt-2 text-3xl font-semibold tracking-wide text-slate-700">{classroom.join_code}</p>
+              <p className="mt-2 font-mono text-3xl font-semibold tracking-wide text-slate-700">{classroom.join_code}</p>
               <Button className="h-8 gap-1.5 px-2.5 outline-none" onClick={() => void handleCopyClassCode()} size="sm" type="button" variant="outline">
                 {hasCopiedClassCode ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
                 {hasCopiedClassCode ? "Copied" : "Copy"}
@@ -692,11 +776,11 @@ export default function ClassroomDetailPage() {
               <UsersIcon className="size-4" />
               <p className="text-sm font-medium">People</p>
             </div>
-            <p className="mt-2 text-sm text-slate-600">{activeMemberCount} active member(s)</p>
+            <p className="mt-2 text-sm text-slate-600">{activeMemberCount} active {activeMemberCount === 1 ? "member" : "members"}</p>
             <div className="mt-3 space-y-2">
               {members.map((member) => (
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 px-2 py-1.5" key={member.user_id}>
-                  <div>
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-2 py-2" key={member.user_id}>
+                  <div className="min-w-0">
                     <p className="text-sm font-medium text-slate-800">{member.name}</p>
                     <p className="text-xs text-slate-500">{member.role}</p>
                   </div>
@@ -713,15 +797,20 @@ export default function ClassroomDetailPage() {
           {isCreator ? (
             <form className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm" onSubmit={handleSave}>
               <p className="text-sm font-semibold text-slate-800">Classroom settings</p>
-              <Input value={name} onChange={(event) => setName(event.target.value)} />
-              <Textarea value={description} onChange={(event) => setDescription(event.target.value)} />
+              <Input aria-label="Classroom name" value={name} onChange={(event) => setName(event.target.value)} />
+              <Textarea aria-label="Classroom description" value={description} onChange={(event) => setDescription(event.target.value)} />
               <Button className="w-full" disabled={isSaving} type="submit">
                 {isSaving ? "Saving..." : "Save changes"}
               </Button>
               <Button className="w-full" onClick={handleRegenerateCode} type="button" variant="outline">
                 Regenerate join code
               </Button>
-              <Button className="w-full" onClick={handleArchive} type="button" variant="destructive">
+              <Button
+                className="w-full"
+                onClick={() => setIsArchiveConfirmOpen(true)}
+                type="button"
+                variant="destructive"
+              >
                 Archive classroom
               </Button>
             </form>
@@ -731,9 +820,13 @@ export default function ClassroomDetailPage() {
         <section className="space-y-4">
           <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
             {isCreator ? (
-              <div className="flex justify-end">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="px-1">
+                  <p className="text-sm font-semibold text-slate-900">Class stream</p>
+                  <p className="text-xs text-slate-500">Announcements, resources, and AI study tools</p>
+                </div>
                 <Button
-                  className="h-11 w-fit gap-2 rounded-full bg-sky-100 px-5 text-sky-800 hover:bg-sky-200"
+                  className="h-10 w-full gap-2 rounded-full bg-sky-100 px-5 text-sky-800 hover:bg-sky-200 sm:w-fit"
                   onClick={() => setIsAnnouncementModalOpen(true)}
                   type="button"
                   variant="secondary"
@@ -743,18 +836,22 @@ export default function ClassroomDetailPage() {
                 </Button>
               </div>
             ) : (
-              <p className="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-500">
-                Only classroom creators can post announcements.
-              </p>
+              <div className="flex flex-col gap-1 rounded-lg bg-slate-50 px-4 py-3">
+                <p className="text-sm font-medium text-slate-800">Class stream</p>
+                <p className="text-sm text-slate-500">Only classroom creators can post announcements.</p>
+              </div>
             )}
           </div>
 
-          {isLoadingAnnouncements ? <p className="text-sm text-slate-500">Loading announcements...</p> : null}
+          {isLoadingAnnouncements ? (
+            <div className="space-y-3">
+              <Skeleton className="h-36 rounded-xl" />
+              <Skeleton className="h-36 rounded-xl" />
+            </div>
+          ) : null}
 
           {!isLoadingAnnouncements && announcements.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
-              No announcements yet.
-            </div>
+            <EmptyStreamState isCreator={isCreator} onCreate={() => setIsAnnouncementModalOpen(true)} />
           ) : null}
 
           {!isLoadingAnnouncements
@@ -772,13 +869,13 @@ export default function ClassroomDetailPage() {
               );
 
               return (
-                <article className="rounded-xl border border-slate-200 bg-white shadow-sm" key={announcement.id}>
+                <article className="stream-card rounded-xl border border-slate-200 bg-white shadow-sm" key={announcement.id}>
                   <div className="flex items-start gap-3 px-4 py-4">
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-sky-700 text-sm font-semibold text-white">
+                    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-sky-700 text-sm font-semibold text-white ring-2 ring-sky-50">
                       <img src={"https://api.dicebear.com/9.x/adventurer/svg?seed=" + announcement.created_by_name} alt={announcement.created_by_name} className="size-full" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="font-medium text-slate-900">{announcement.created_by_name}</p>
@@ -789,7 +886,7 @@ export default function ClassroomDetailPage() {
                           <Button
                             size="sm"
                             type="button"
-                            className="h-8 shrink-0 gap-1.5 rounded-full border border-fuchsia-200 bg-gradient-to-r from-fuchsia-50 to-rose-100 px-3 text-fuchsia-900 shadow-sm hover:from-fuchsia-100 hover:to-rose-200"
+                            className="h-8 shrink-0 gap-1.5 rounded-full border border-fuchsia-200 bg-gradient-to-r from-fuchsia-50 to-rose-100 px-3 text-fuchsia-900 shadow-sm hover:from-fuchsia-100 hover:to-rose-200 hover:cursor-pointer"
                             variant="ghost"
                             onClick={() => {
                               void handleOpenReaderChat(announcement.attachment);
@@ -805,7 +902,7 @@ export default function ClassroomDetailPage() {
                       {announcement.attachment ? (
                         <div className="mt-3 space-y-2">
                           <button
-                            className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100"
+                            className="interactive-lift flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2"
                             onClick={() => {
                               void handleOpenAttachment(announcement);
                             }}
@@ -828,7 +925,7 @@ export default function ClassroomDetailPage() {
                             </div>
                             <div className="ml-3 text-slate-600">
                               {announcement.attachment.type === "file" ? (
-                                <PaperclipIcon className="size-4" />
+                                <FileTextIcon className="size-4" />
                               ) : announcement.attachment.type === "youtube" ? (
                                 <PlayCircleIcon className="size-4" />
                               ) : (
@@ -839,7 +936,7 @@ export default function ClassroomDetailPage() {
                           {isImageAttachment && imagePreviewUrl ? (
                             <button
                               aria-label={`Open attached image: ${announcement.attachment?.title || announcement.attachment?.file?.filename || "Image"}`}
-                              className="block w-full overflow-hidden rounded-lg border border-slate-200 bg-white transition hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2"
+                              className="interactive-lift block w-full overflow-hidden rounded-lg border border-slate-200 bg-white transition hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2"
                               onClick={() => {
                                 void handleOpenAttachment(announcement);
                               }}
@@ -892,8 +989,8 @@ export default function ClassroomDetailPage() {
                                     }`}
                                 />
                               </summary>
-                              <div className="mt-2 flex items-center justify-end gap-2 summary-open-content">
-                                <div className="flex items-center gap-2">
+                              <div className="summary-open-content mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                                <div className="flex flex-wrap items-center gap-2">
                                   <Button
                                     size="sm"
                                     type="button"
@@ -928,13 +1025,16 @@ export default function ClassroomDetailPage() {
                               </div>
 
                               {isSummaryLoadingByFileId[summaryFileId] ? (
-                                <p className="mt-2 text-sm text-slate-500">Loading summary...</p>
+                                <div className="mt-3 space-y-2">
+                                  <Skeleton className="h-4 w-4/5" />
+                                  <Skeleton className="h-4 w-2/3" />
+                                </div>
                               ) : null}
 
                               {!isSummaryLoadingByFileId[summaryFileId] &&
                                 !summaryByFileId[summaryFileId] ? (
                                 <div className="mt-2 space-y-2">
-                                  <p className="text-sm text-slate-500">No summary loaded yet.</p>
+                                  <p className="text-sm text-slate-500">Generate a summary when you want a quick study pass.</p>
                                   <Button
                                     size="sm"
                                     type="button"
@@ -950,7 +1050,7 @@ export default function ClassroomDetailPage() {
 
                               {summaryByFileId[summaryFileId]?.state === "empty" ? (
                                 <div className="mt-2 space-y-2">
-                                  <p className="text-sm text-slate-500">No summary available yet.</p>
+                                  <p className="text-sm text-slate-500">No summary has been generated for this resource.</p>
                                   <Button
                                     size="sm"
                                     type="button"
@@ -965,12 +1065,15 @@ export default function ClassroomDetailPage() {
                               ) : null}
 
                               {summaryByFileId[summaryFileId]?.state === "pending" ? (
-                                <p className="mt-2 text-sm text-slate-500">Summary generation in progress...</p>
+                                <p className="mt-3 rounded-md bg-white/70 px-3 py-2 text-sm text-slate-600 ring-1 ring-sky-100">
+                                  Summary generation is in progress.
+                                </p>
                               ) : null}
 
                               {summaryByFileId[summaryFileId]?.state === "failed" ? (
-                                <div className="mt-2 space-y-2">
-                                  <p className="text-sm text-rose-600">
+                                <div className="mt-3 space-y-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2">
+                                  <p className="inline-flex items-center gap-2 text-sm text-rose-700">
+                                    <AlertCircleIcon className="size-4" />
                                     {summaryByFileId[summaryFileId]?.error_message ?? "Summary generation failed."}
                                   </p>
                                   <Button
@@ -1058,32 +1161,44 @@ export default function ClassroomDetailPage() {
                               </div>
 
                               {isQuizLoadingByFileId[summaryFileId] ? (
-                                <p className="mt-2 text-sm text-slate-500">Loading quiz...</p>
+                                <div className="mt-3 space-y-2">
+                                  <Skeleton className="h-4 w-3/4" />
+                                  <Skeleton className="h-9 w-full rounded-md" />
+                                  <Skeleton className="h-9 w-full rounded-md" />
+                                </div>
                               ) : null}
 
                               {!isQuizLoadingByFileId[summaryFileId] && !quizByFileId[summaryFileId] ? (
-                                <p className="mt-2 text-sm text-slate-500">No quiz loaded yet.</p>
+                                <p className="mt-3 text-sm text-slate-600">Load or generate a quiz for this resource.</p>
                               ) : null}
 
                               {quizByFileId[summaryFileId]?.state === "empty" ? (
-                                <p className="mt-2 text-sm text-slate-500">No quiz generated yet.</p>
+                                <p className="mt-3 text-sm text-slate-600">No quiz has been generated yet.</p>
                               ) : null}
 
                               {quizByFileId[summaryFileId]?.state === "pending" ? (
-                                <p className="mt-2 text-sm text-slate-500">Quiz generation in progress...</p>
+                                <p className="mt-3 rounded-md bg-white/70 px-3 py-2 text-sm text-slate-600 ring-1 ring-amber-100">
+                                  Quiz generation is in progress.
+                                </p>
                               ) : null}
 
                               {quizByFileId[summaryFileId]?.state === "failed" ? (
-                                <p className="mt-2 text-sm text-rose-600">
+                                <p className="mt-3 inline-flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                                  <AlertCircleIcon className="size-4" />
                                   {quizByFileId[summaryFileId]?.error_message ?? "Quiz generation failed."}
                                 </p>
                               ) : null}
 
                               {quizByFileId[summaryFileId]?.state === "completed" ? (
                                 <div className="summary-open-content mt-3 space-y-4">
-                                  <p className="rounded-md bg-white/75 px-3 py-2 text-sm font-semibold text-amber-950 ring-1 ring-amber-100">
-                                    {quizByFileId[summaryFileId]?.title ?? "Generated Quiz"}
-                                  </p>
+                                  <div className="flex flex-col gap-2 rounded-md bg-white/75 px-3 py-2 ring-1 ring-amber-100 sm:flex-row sm:items-center sm:justify-between">
+                                    <p className="text-sm font-semibold text-amber-950">
+                                      {quizByFileId[summaryFileId]?.title ?? "Generated Quiz"}
+                                    </p>
+                                    <p className="text-xs font-medium text-amber-800">
+                                      {quizByFileId[summaryFileId]?.questions.length ?? 0} questions
+                                    </p>
+                                  </div>
 
                                   {quizByFileId[summaryFileId]?.questions.map((question, questionIndex) => {
                                     const selectedOption = quizAnswersByFileId[summaryFileId]?.[question.id];
@@ -1102,7 +1217,7 @@ export default function ClassroomDetailPage() {
                                             const showWrong = showResult && isSelected && !isCorrect;
                                             return (
                                               <button
-                                                className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${showCorrect
+                                                className={`min-h-11 w-full rounded-md border px-3 py-2 text-left text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 ${showCorrect
                                                   ? "border-emerald-300 bg-emerald-50 text-emerald-900"
                                                   : showWrong
                                                     ? "border-rose-300 bg-rose-50 text-rose-900"
@@ -1128,16 +1243,17 @@ export default function ClassroomDetailPage() {
                                   })}
 
                                   {quizResultsByFileId[summaryFileId] ? (
-                                    <p className="rounded-md bg-gradient-to-r from-amber-600 to-rose-600 px-3 py-2 text-sm font-semibold text-white shadow-sm">
+                                    <p className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white shadow-sm">
                                       Score: {quizResultsByFileId[summaryFileId].score} / {quizResultsByFileId[summaryFileId].total}
                                     </p>
                                   ) : null}
 
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                                     <Button
                                       size="sm"
                                       type="button"
                                       className="bg-amber-700 text-white hover:bg-amber-800"
+                                      disabled={Boolean(quizResultsByFileId[summaryFileId])}
                                       onClick={() => handleSubmitQuiz(summaryFileId)}
                                     >
                                       Submit quiz
@@ -1167,6 +1283,38 @@ export default function ClassroomDetailPage() {
       </div>
 
       <Dialog
+        open={isArchiveConfirmOpen}
+        onOpenChange={(open) => {
+          if (isArchivingClassroom) {
+            return;
+          }
+          setIsArchiveConfirmOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Archive classroom?</DialogTitle>
+            <DialogDescription>
+              This will archive {classroom ? `"${classroom.name}"` : "this classroom"} and remove it from active classrooms.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              disabled={isArchivingClassroom}
+              onClick={() => setIsArchiveConfirmOpen(false)}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button disabled={isArchivingClassroom} onClick={() => void handleArchive()} type="button" variant="destructive">
+              {isArchivingClassroom ? "Archiving..." : "Archive classroom"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={isReaderOpen}
         onOpenChange={(open) => {
           if (open) {
@@ -1178,14 +1326,14 @@ export default function ClassroomDetailPage() {
           setReaderPreviewUrl(null);
         }}
       >
-        <DialogContent className="max-h-[90vh] w-[96vw] max-w-5xl! overflow-auto">
+        <DialogContent className="max-h-[92vh] w-[96vw] max-w-6xl! overflow-auto">
           <DialogHeader>
             <DialogTitle>{readerFile?.title || readerFile?.filename || "Reader"}</DialogTitle>
             <DialogDescription>Study the file and ask questions from the material.</DialogDescription>
           </DialogHeader>
 
           {!readerFile ? null : (
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
               <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">
                   {readerFile.content_type === "application/pdf" ? "PDF document" : "Image attachment"}
@@ -1200,15 +1348,17 @@ export default function ClassroomDetailPage() {
                   </div>
                 ) : null}
                 {readerFile.content_type === "application/pdf" ? (
-                  <div className="space-y-2 rounded-lg border border-slate-200 bg-white">
+                  <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-2">
 
                     {readerPreviewUrl ? (
                       <iframe
                         src={readerPreviewUrl}
                         title={readerFile.title || readerFile.filename}
-                        className="h-[55vh] w-full rounded-md border border-slate-200"
+                        className="h-[50vh] w-full rounded-md border border-slate-200 lg:h-[58vh]"
                       />
-                    ) : null}
+                    ) : (
+                      <Skeleton className="h-[50vh] w-full rounded-md lg:h-[58vh]" />
+                    )}
                     {readerPreviewUrl ? (
                       <Button
                         type="button"
@@ -1224,21 +1374,29 @@ export default function ClassroomDetailPage() {
               </section>
 
               <section className="flex min-h-[420px] flex-col rounded-lg border border-slate-200 bg-white">
-                <div className="border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-800">Document Chat</div>
+                <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-800">
+                  <MessageSquareTextIcon className="size-4 text-violet-700" />
+                  Document Chat
+                </div>
                 <div className="flex-1 space-y-2 overflow-auto px-3 py-3">
                   {isFileChatLoadingByFileId[readerFile.id] ? (
-                    <p className="text-sm text-slate-500">Loading chat...</p>
+                    <div className="space-y-2">
+                      <Skeleton className="h-9 w-2/3 rounded-lg" />
+                      <Skeleton className="ml-auto h-9 w-1/2 rounded-lg" />
+                    </div>
                   ) : null}
                   {!isFileChatLoadingByFileId[readerFile.id] && !fileChatByFileId[readerFile.id] ? (
-                    <p className="text-sm text-slate-500">No chat loaded yet.</p>
+                    <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-500">No chat loaded yet.</p>
                   ) : null}
                   {fileChatByFileId[readerFile.id]?.state === "failed" ? (
-                    <p className="text-sm text-rose-600">
+                    <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                       {fileChatByFileId[readerFile.id]?.error_message || "Chat failed."}
                     </p>
                   ) : null}
                   {fileChatByFileId[readerFile.id]?.state === "empty" ? (
-                    <p className="text-sm text-slate-500">Start by asking a question about this file.</p>
+                    <p className="rounded-lg bg-violet-50 px-3 py-2 text-sm text-violet-900">
+                      Start by asking a question about this file.
+                    </p>
                   ) : null}
                   {(fileChatByFileId[readerFile.id]?.messages ?? []).map((message) => (
                     <div
@@ -1253,16 +1411,16 @@ export default function ClassroomDetailPage() {
                       <span className="inline-flex items-center gap-1.5">
                         AI is thinking
                         <span className="inline-flex gap-1">
-                          <span className="size-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:-0.2s]" />
-                          <span className="size-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:-0.1s]" />
-                          <span className="size-1.5 animate-bounce rounded-full bg-slate-500" />
+                          <span className="thinking-dot size-1.5 rounded-full bg-slate-500 [animation-delay:-0.2s]" />
+                          <span className="thinking-dot size-1.5 rounded-full bg-slate-500 [animation-delay:-0.1s]" />
+                          <span className="thinking-dot size-1.5 rounded-full bg-slate-500" />
                         </span>
                       </span>
                     </div>
                   ) : null}
                 </div>
                 <form
-                  className="border-t border-slate-200 p-3"
+                  className="border-t border-slate-200 bg-slate-50/70 p-3"
                   onSubmit={(event) => {
                     event.preventDefault();
                     void handleAskFileChat(readerFile.id);
@@ -1277,8 +1435,17 @@ export default function ClassroomDetailPage() {
                       }
                       disabled={Boolean(isFileChatAskingByFileId[readerFile.id])}
                     />
-                    <Button aria-label="Send message" type="submit" disabled={Boolean(isFileChatAskingByFileId[readerFile.id])}>
-                      {isFileChatAskingByFileId[readerFile.id] ? "Sending..." : <SendHorizontalIcon className="size-4" />}
+                    <Button
+                      aria-label="Send message"
+                      className="min-w-10"
+                      type="submit"
+                      disabled={Boolean(isFileChatAskingByFileId[readerFile.id])}
+                    >
+                      {isFileChatAskingByFileId[readerFile.id] ? (
+                        <Loader2Icon className="size-4 animate-spin motion-reduce:animate-none" />
+                      ) : (
+                        <SendHorizontalIcon className="size-4" />
+                      )}
                     </Button>
                   </div>
                 </form>
@@ -1300,7 +1467,7 @@ export default function ClassroomDetailPage() {
           }
         }}
       >
-        <DialogContent className="max-w-lg!">
+        <DialogContent className="max-h-[92vh] max-w-lg! overflow-auto">
           <DialogHeader>
             <DialogTitle>Announcement</DialogTitle>
             <DialogDescription>Post an update to this classroom stream.</DialogDescription>
@@ -1323,9 +1490,9 @@ export default function ClassroomDetailPage() {
 
             <div className="space-y-2">
               <p className="text-sm font-medium text-slate-700">Attachment (optional)</p>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Button
-                  className="min-w-[100px] gap-2"
+                  className="gap-2"
                   onClick={() => setAttachmentType("none")}
                   type="button"
                   variant={attachmentType === "none" ? "default" : "outline"}
@@ -1334,7 +1501,7 @@ export default function ClassroomDetailPage() {
                   None
                 </Button>
                 <Button
-                  className="min-w-[100px] gap-2"
+                  className="gap-2"
                   onClick={() => setAttachmentType("file")}
                   type="button"
                   variant={attachmentType === "file" ? "default" : "outline"}
@@ -1343,7 +1510,7 @@ export default function ClassroomDetailPage() {
                   File
                 </Button>
                 <Button
-                  className="min-w-[100px] gap-2"
+                  className="gap-2"
                   onClick={() => setAttachmentType("link")}
                   type="button"
                   variant={attachmentType === "link" ? "default" : "outline"}
@@ -1352,7 +1519,7 @@ export default function ClassroomDetailPage() {
                   Link
                 </Button>
                 <Button
-                  className="min-w-[120px] gap-2"
+                  className="gap-2"
                   onClick={() => setAttachmentType("youtube")}
                   type="button"
                   variant={attachmentType === "youtube" ? "default" : "outline"}

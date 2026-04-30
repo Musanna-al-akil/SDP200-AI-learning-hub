@@ -43,7 +43,7 @@ def generate_chat_answer_from_text(
     response = client.chat.completions.create(
         model=CHAT_MODEL,
         messages=messages,
-        temperature=0.2,
+        temperature=0.25,
     )
     answer = (response.choices[0].message.content or "").strip() if response.choices else ""
     if not answer:
