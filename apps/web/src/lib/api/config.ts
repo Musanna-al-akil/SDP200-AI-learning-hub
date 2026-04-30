@@ -5,6 +5,6 @@ const rawApiBaseUrl =
 
 export const appConfig = {
   apiBaseUrl: rawApiBaseUrl.replace(/\/+$/, ""),
-  appName: process.env.NEXT_PUBLIC_APP_NAME ?? "AI-Enhanced Learning Hub",
+  appName: process.env.NEXT_PUBLIC_APP_NAME ?? "Aura Classroom",
   appEnv: process.env.NEXT_PUBLIC_APP_ENV ?? "development",
 } as const;

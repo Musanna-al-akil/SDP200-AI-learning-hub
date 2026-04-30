@@ -11,8 +11,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AI-Enhanced Learning Hub",
-  description: "AI classroom platform",
+  title: "Aura Classroom",
+  description: "AI-enhanced classroom workspace for teaching and study.",
 };
 
 export default function RootLayout({
@@ -21,10 +21,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${inter.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
         <AuthProvider>
           {children}

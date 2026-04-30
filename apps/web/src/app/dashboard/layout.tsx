@@ -31,7 +31,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                   <div className="rounded-md bg-sky-100 p-1.5 text-sky-700">
                     <GraduationCapIcon className="size-4" />
                   </div>
-                  <p className="text-lg font-medium tracking-tight text-foreground">Classroom</p>
+                  <p className="text-lg font-medium tracking-tight text-foreground">Aura Classroom</p>
                 </div>
               </div>
               <DashboardActions variant="header" />

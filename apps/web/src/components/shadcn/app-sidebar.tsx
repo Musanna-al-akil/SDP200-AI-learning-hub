@@ -120,8 +120,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <GraduationCapIcon className="size-4" />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">SDP Versity</span>
-                  <span className="truncate text-xs text-sidebar-foreground/70">Classroom</span>
+                  <span className="truncate font-semibold">Aura Classroom</span>
+                  <span className="truncate text-xs text-sidebar-foreground/70">Teaching workspace</span>
                 </div>
               </Link>
             </SidebarMenuButton>
