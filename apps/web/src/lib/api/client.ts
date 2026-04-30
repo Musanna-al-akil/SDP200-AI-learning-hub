@@ -187,6 +187,26 @@ export type FileQuiz = {
   updated_at: string | null;
 };
 
+export type FileChatState = "empty" | "completed" | "failed";
+
+export type FileChatMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+};
+
+export type FileChat = {
+  state: FileChatState;
+  chat_id: string | null;
+  file_id: string;
+  messages: FileChatMessage[];
+  error_message: string | null;
+  provider: string | null;
+  model: string | null;
+  updated_at: string | null;
+};
+
 export type AnnouncementAttachmentFile = {
   id: string;
   filename: string;
@@ -347,5 +367,11 @@ export const apiClient = {
         regenerate: Boolean(payload?.regenerate),
         question_count: payload?.questionCount ?? 5,
       }),
+    }),
+  getFileChat: (fileId: string) => requestJson<FileChat>(`/files/${fileId}/chat`),
+  askFileChat: (fileId: string, payload: { message: string }) =>
+    requestJson<FileChat>(`/files/${fileId}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ message: payload.message }),
     }),
 };

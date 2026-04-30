@@ -148,6 +148,28 @@ class FileQuizResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class FileChatAskRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class FileChatMessageResponse(BaseModel):
+    id: UUID
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: datetime
+
+
+class FileChatResponse(BaseModel):
+    state: Literal["empty", "completed", "failed"]
+    chat_id: UUID | None = None
+    file_id: UUID
+    messages: list[FileChatMessageResponse] = Field(default_factory=list)
+    error_message: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    updated_at: datetime | None = None
+
+
 class AnnouncementAttachmentFileResponse(BaseModel):
     id: UUID
     filename: str

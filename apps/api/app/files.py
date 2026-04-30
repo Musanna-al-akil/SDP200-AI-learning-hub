@@ -7,11 +7,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.chat_service import (
+    CHAT_MODEL,
+    CHAT_PROVIDER,
+    generate_chat_answer_from_image,
+    generate_chat_answer_from_text,
+)
 from app.db import get_async_session
 from app.guards import require_classroom_membership
-from app.models import AIOutput, Announcement, Classroom, ClassroomMembership, File, Quiz, QuizQuestion, User
+from app.models import AIOutput, Announcement, Chat, ChatMessage, Classroom, ClassroomMembership, File, Quiz, QuizQuestion, User
 from app.quiz_service import QUIZ_MODEL, QUIZ_PROVIDER, generate_quiz_from_image, generate_quiz_from_text
 from app.schemas import (
+    FileChatAskRequest,
+    FileChatMessageResponse,
+    FileChatResponse,
     FileDownloadResponse,
     FileListResponse,
     FileQuizGenerateRequest,
@@ -413,3 +422,141 @@ async def generate_file_quiz(
         await db.refresh(quiz)
         message = str(error) or "Quiz generation failed."
         return _to_quiz_response(quiz, item.id, [], message)
+
+
+def _to_chat_message_response(message: ChatMessage) -> FileChatMessageResponse:
+    role = "assistant" if message.role == "assistant" else "user"
+    return FileChatMessageResponse(
+        id=message.id,
+        role=role,
+        content=message.content,
+        created_at=message.created_at,
+    )
+
+
+def _to_chat_response(chat: Chat | None, file_id: UUID, messages: list[ChatMessage] | None = None, error_message: str | None = None) -> FileChatResponse:
+    if chat is None:
+        return FileChatResponse(state="empty", file_id=file_id)
+    return FileChatResponse(
+        state="failed" if error_message else "completed",
+        chat_id=chat.id,
+        file_id=file_id,
+        messages=[_to_chat_message_response(message) for message in (messages or [])],
+        error_message=error_message,
+        provider=CHAT_PROVIDER,
+        model=CHAT_MODEL,
+        updated_at=chat.updated_at,
+    )
+
+
+async def _get_user_file_chat(db: AsyncSession, file_id: UUID, user_id: UUID) -> Chat | None:
+    result = await db.execute(
+        select(Chat)
+        .where(Chat.file_id == file_id, Chat.user_id == user_id)
+        .order_by(Chat.updated_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_chat_messages(db: AsyncSession, chat_id: UUID) -> list[ChatMessage]:
+    result = await db.execute(select(ChatMessage).where(ChatMessage.chat_id == chat_id).order_by(ChatMessage.created_at.asc()))
+    return result.scalars().all()
+
+
+def _assert_chat_file_ready(item: File) -> None:
+    if not _is_supported_ai_file(item):
+        raise _error(status.HTTP_400_BAD_REQUEST, "invalid_file_type", "Chat is only available for PDF or image files.")
+    if _is_pdf_file(item):
+        if item.processing_status != "completed":
+            raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "Chat requires a processed PDF file.")
+        if not item.extracted_text or not item.extracted_text.strip():
+            raise _error(status.HTTP_400_BAD_REQUEST, "file_not_ready", "No extracted text found for this file.")
+
+
+@router.get("/files/{file_id}/chat", response_model=FileChatResponse)
+async def get_file_chat(
+    file_id: UUID,
+    db: db_dependency,
+    user: User = Depends(current_active_user),
+) -> FileChatResponse:
+    item = await _get_authorized_file(file_id, user.id, db)
+    _assert_chat_file_ready(item)
+    chat = await _get_user_file_chat(db, item.id, user.id)
+    if chat is None:
+        return _to_chat_response(None, item.id)
+    messages = await _get_chat_messages(db, chat.id)
+    return _to_chat_response(chat, item.id, messages)
+
+
+@router.post("/files/{file_id}/chat", response_model=FileChatResponse)
+async def ask_file_chat(
+    file_id: UUID,
+    payload: FileChatAskRequest,
+    db: db_dependency,
+    user: User = Depends(current_active_user),
+) -> FileChatResponse:
+    item = await _get_authorized_file(file_id, user.id, db)
+    _assert_chat_file_ready(item)
+    text = payload.message.strip()
+    if not text:
+        raise _error(status.HTTP_400_BAD_REQUEST, "validation_error", "Message cannot be empty.")
+
+    chat = await _get_user_file_chat(db, item.id, user.id)
+    if chat is None:
+        chat = Chat(
+            classroom_id=item.classroom_id,
+            file_id=item.id,
+            user_id=user.id,
+            title=(item.title or item.filename)[:255],
+        )
+        db.add(chat)
+        await db.commit()
+        await db.refresh(chat)
+
+    existing_messages = await _get_chat_messages(db, chat.id)
+    history = [{"role": message.role, "content": message.content} for message in existing_messages if message.role in {"user", "assistant"}]
+
+    user_message = ChatMessage(
+        chat_id=chat.id,
+        role="user",
+        content=text,
+    )
+    db.add(user_message)
+    await db.commit()
+
+    try:
+        if _is_pdf_file(item):
+            answer = generate_chat_answer_from_text(
+                extracted_text=item.extracted_text or "",
+                history=history,
+                user_message=text,
+                file_title=item.title,
+                filename=item.filename,
+                announcement_body=await _get_file_announcement_context(item.id, db),
+            )
+        else:
+            answer = generate_chat_answer_from_image(
+                image_url=create_download_url(item.storage_key),
+                history=history,
+                user_message=text,
+                file_title=item.title,
+                filename=item.filename,
+                announcement_body=await _get_file_announcement_context(item.id, db),
+            )
+        assistant_message = ChatMessage(
+            chat_id=chat.id,
+            role="assistant",
+            content=answer,
+            provider=CHAT_PROVIDER,
+            model=CHAT_MODEL,
+        )
+        db.add(assistant_message)
+        await db.commit()
+        await db.refresh(chat)
+        messages = await _get_chat_messages(db, chat.id)
+        return _to_chat_response(chat, item.id, messages)
+    except Exception as error:
+        await db.refresh(chat)
+        messages = await _get_chat_messages(db, chat.id)
+        return _to_chat_response(chat, item.id, messages, str(error) or "Chat generation failed.")

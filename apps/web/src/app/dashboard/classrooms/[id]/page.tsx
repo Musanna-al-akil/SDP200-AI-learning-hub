@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { ChevronDownIcon, CircleOffIcon, Link2Icon, Loader2Icon, PaperclipIcon, PlayCircleIcon, PlusIcon, UsersIcon } from "lucide-react";
+import { BrainCircuitIcon, CheckIcon, ChevronDownIcon, CircleOffIcon, CopyIcon, Link2Icon, Loader2Icon, MessageSquareTextIcon, PaperclipIcon, PlayCircleIcon, PlusIcon, SendHorizontalIcon, SparklesIcon, UsersIcon } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -25,12 +25,20 @@ import {
   type ClassroomAnnouncement,
   type ClassroomFile,
   type ClassroomMember,
+  type FileChat,
   type FileQuiz,
   type FileSummary,
 } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/auth-provider";
 
 type AttachmentComposerType = "none" | "file" | "link" | "youtube";
+type ReaderFile = {
+  id: string;
+  filename: string;
+  title: string | null;
+  content_type: string;
+  processing_status: string;
+};
 
 const PDF_PROCESSING_POLL_MS = 1500;
 type QuizResult = { score: number; total: number };
@@ -150,6 +158,14 @@ export default function ClassroomDetailPage() {
   const [quizAnswersByFileId, setQuizAnswersByFileId] = useState<Record<string, Record<string, number>>>({});
   const [quizResultsByFileId, setQuizResultsByFileId] = useState<Record<string, QuizResult>>({});
   const [imagePreviewUrlByFileId, setImagePreviewUrlByFileId] = useState<Record<string, string | null>>({});
+  const [isReaderOpen, setIsReaderOpen] = useState(false);
+  const [readerFile, setReaderFile] = useState<ReaderFile | null>(null);
+  const [readerPreviewUrl, setReaderPreviewUrl] = useState<string | null>(null);
+  const [fileChatByFileId, setFileChatByFileId] = useState<Record<string, FileChat>>({});
+  const [isFileChatLoadingByFileId, setIsFileChatLoadingByFileId] = useState<Record<string, boolean>>({});
+  const [isFileChatAskingByFileId, setIsFileChatAskingByFileId] = useState<Record<string, boolean>>({});
+  const [chatInputByFileId, setChatInputByFileId] = useState<Record<string, string>>({});
+  const [hasCopiedClassCode, setHasCopiedClassCode] = useState(false);
 
   const isCreator = classroom?.membership_role === "creator";
 
@@ -238,7 +254,7 @@ export default function ClassroomDetailPage() {
     const imageFileIds = announcements
       .map((announcement) =>
         announcement.attachment?.type === "file" &&
-        announcement.attachment.file?.content_type.startsWith("image/")
+          announcement.attachment.file?.content_type.startsWith("image/")
           ? announcement.attachment.file.id
           : null,
       )
@@ -429,6 +445,55 @@ export default function ClassroomDetailPage() {
     }
   };
 
+  const handleOpenReaderChat = async (attachment: ClassroomAnnouncement["attachment"]) => {
+    if (attachment?.type !== "file" || !attachment.file) {
+      return;
+    }
+    const selectedFile: ReaderFile = {
+      id: attachment.file.id,
+      filename: attachment.file.filename,
+      title: attachment.file.title,
+      content_type: attachment.file.content_type,
+      processing_status: attachment.file.processing_status,
+    };
+    setReaderFile(selectedFile);
+    setIsReaderOpen(true);
+    setReaderPreviewUrl(null);
+    setIsFileChatLoadingByFileId((previous) => ({ ...previous, [selectedFile.id]: true }));
+
+    try {
+      const [download, chat] = await Promise.all([
+        apiClient.getFileDownloadUrl(selectedFile.id),
+        apiClient.getFileChat(selectedFile.id),
+      ]);
+      setReaderPreviewUrl(download.url);
+      setFileChatByFileId((previous) => ({ ...previous, [selectedFile.id]: chat }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not open reader";
+      toast.error(message);
+    } finally {
+      setIsFileChatLoadingByFileId((previous) => ({ ...previous, [selectedFile.id]: false }));
+    }
+  };
+
+  const handleAskFileChat = async (fileId: string) => {
+    const message = (chatInputByFileId[fileId] ?? "").trim();
+    if (!message) {
+      return;
+    }
+    setIsFileChatAskingByFileId((previous) => ({ ...previous, [fileId]: true }));
+    try {
+      const chat = await apiClient.askFileChat(fileId, { message });
+      setFileChatByFileId((previous) => ({ ...previous, [fileId]: chat }));
+      setChatInputByFileId((previous) => ({ ...previous, [fileId]: "" }));
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Could not send message";
+      toast.error(messageText);
+    } finally {
+      setIsFileChatAskingByFileId((previous) => ({ ...previous, [fileId]: false }));
+    }
+  };
+
   const handleLoadSummary = async (fileId: string) => {
     setIsSummaryLoadingByFileId((previous) => ({ ...previous, [fileId]: true }));
     try {
@@ -575,6 +640,20 @@ export default function ClassroomDetailPage() {
     }
   };
 
+  const handleCopyClassCode = async () => {
+    if (!classroom?.join_code) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(classroom.join_code);
+      setHasCopiedClassCode(true);
+      window.setTimeout(() => setHasCopiedClassCode(false), 1500);
+      toast.success("Class code copied");
+    } catch {
+      toast.error("Could not copy class code");
+    }
+  };
+
   if (isLoading || !isAuthenticated || isLoadingPage) {
     return <main className="p-8 text-sm text-muted-foreground">Loading classroom...</main>;
   }
@@ -599,7 +678,13 @@ export default function ClassroomDetailPage() {
         <aside className="space-y-4">
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Class code</p>
-            <p className="mt-2 text-3xl font-semibold tracking-wide text-slate-700">{classroom.join_code}</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="mt-2 text-3xl font-semibold tracking-wide text-slate-700">{classroom.join_code}</p>
+              <Button className="h-8 gap-1.5 px-2.5 outline-none" onClick={() => void handleCopyClassCode()} size="sm" type="button" variant="outline">
+                {hasCopiedClassCode ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+                {hasCopiedClassCode ? "Copied" : "Copy"}
+              </Button>
+            </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -693,9 +778,27 @@ export default function ClassroomDetailPage() {
                       <img src={"https://api.dicebear.com/9.x/adventurer/svg?seed=" + announcement.created_by_name} alt={announcement.created_by_name} className="size-full" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-medium text-slate-900">{announcement.created_by_name}</p>
-                        <span className="text-xs text-slate-500">{formatPostedAt(announcement.created_at)}</span>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-slate-900">{announcement.created_by_name}</p>
+                            <span className="text-xs text-slate-500">{formatPostedAt(announcement.created_at)}</span>
+                          </div>
+                        </div>
+                        {summaryFileId && announcement.attachment?.type === "file" && announcement.attachment.file ? (
+                          <Button
+                            size="sm"
+                            type="button"
+                            className="h-8 shrink-0 gap-1.5 rounded-full border border-fuchsia-200 bg-gradient-to-r from-fuchsia-50 to-rose-100 px-3 text-fuchsia-900 shadow-sm hover:from-fuchsia-100 hover:to-rose-200"
+                            variant="ghost"
+                            onClick={() => {
+                              void handleOpenReaderChat(announcement.attachment);
+                            }}
+                          >
+                            <MessageSquareTextIcon className="size-3.5" />
+                            Chat With Resource
+                          </Button>
+                        ) : null}
                       </div>
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{announcement.body}</p>
 
@@ -733,7 +836,6 @@ export default function ClassroomDetailPage() {
                               )}
                             </div>
                           </button>
-
                           {isImageAttachment && imagePreviewUrl ? (
                             <button
                               aria-label={`Open attached image: ${announcement.attachment?.title || announcement.attachment?.file?.filename || "Image"}`}
@@ -779,7 +881,8 @@ export default function ClassroomDetailPage() {
                                 className={`flex cursor-pointer list-none items-center justify-between text-sm font-semibold ${isSummaryCompleted ? "text-sky-900" : "text-slate-800"
                                   }`}
                               >
-                                <span>
+                                <span className="inline-flex items-center gap-1.5">
+                                  <SparklesIcon className="size-3.5" />
                                   {summaryByFileId[summaryFileId]?.state === "completed"
                                     ? "Summary available"
                                     : "AI Summary"}
@@ -912,7 +1015,10 @@ export default function ClassroomDetailPage() {
                           {summaryFileId ? (
                             <details className="group rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 via-orange-50 to-rose-50 p-3 shadow-sm transition">
                               <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold text-amber-900">
-                                <span>{quizByFileId[summaryFileId]?.state === "completed" ? "Quiz available" : "AI Quiz"}</span>
+                                <span className="inline-flex items-center gap-1.5">
+                                  <BrainCircuitIcon className="size-3.5" />
+                                  {quizByFileId[summaryFileId]?.state === "completed" ? "Quiz available" : "AI Quiz"}
+                                </span>
                                 <ChevronDownIcon className="size-4 text-amber-700 transition group-open:rotate-180" />
                               </summary>
 
@@ -1059,6 +1165,128 @@ export default function ClassroomDetailPage() {
             : null}
         </section>
       </div>
+
+      <Dialog
+        open={isReaderOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setIsReaderOpen(true);
+            return;
+          }
+          setIsReaderOpen(false);
+          setReaderFile(null);
+          setReaderPreviewUrl(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] w-[96vw] max-w-5xl! overflow-auto">
+          <DialogHeader>
+            <DialogTitle>{readerFile?.title || readerFile?.filename || "Reader"}</DialogTitle>
+            <DialogDescription>Study the file and ask questions from the material.</DialogDescription>
+          </DialogHeader>
+
+          {!readerFile ? null : (
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_360px]">
+              <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">
+                  {readerFile.content_type === "application/pdf" ? "PDF document" : "Image attachment"}
+                </p>
+                {readerFile.content_type.startsWith("image/") && readerPreviewUrl ? (
+                  <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                    <img
+                      alt={readerFile.title || readerFile.filename}
+                      className="max-h-[55vh] w-full object-contain"
+                      src={readerPreviewUrl}
+                    />
+                  </div>
+                ) : null}
+                {readerFile.content_type === "application/pdf" ? (
+                  <div className="space-y-2 rounded-lg border border-slate-200 bg-white">
+
+                    {readerPreviewUrl ? (
+                      <iframe
+                        src={readerPreviewUrl}
+                        title={readerFile.title || readerFile.filename}
+                        className="h-[55vh] w-full rounded-md border border-slate-200"
+                      />
+                    ) : null}
+                    {readerPreviewUrl ? (
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          window.open(readerPreviewUrl, "_blank", "noopener,noreferrer");
+                        }}
+                      >
+                        Open PDF
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="flex min-h-[420px] flex-col rounded-lg border border-slate-200 bg-white">
+                <div className="border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-800">Document Chat</div>
+                <div className="flex-1 space-y-2 overflow-auto px-3 py-3">
+                  {isFileChatLoadingByFileId[readerFile.id] ? (
+                    <p className="text-sm text-slate-500">Loading chat...</p>
+                  ) : null}
+                  {!isFileChatLoadingByFileId[readerFile.id] && !fileChatByFileId[readerFile.id] ? (
+                    <p className="text-sm text-slate-500">No chat loaded yet.</p>
+                  ) : null}
+                  {fileChatByFileId[readerFile.id]?.state === "failed" ? (
+                    <p className="text-sm text-rose-600">
+                      {fileChatByFileId[readerFile.id]?.error_message || "Chat failed."}
+                    </p>
+                  ) : null}
+                  {fileChatByFileId[readerFile.id]?.state === "empty" ? (
+                    <p className="text-sm text-slate-500">Start by asking a question about this file.</p>
+                  ) : null}
+                  {(fileChatByFileId[readerFile.id]?.messages ?? []).map((message) => (
+                    <div
+                      className={`rounded-lg px-3 py-2 text-sm ${message.role === "user" ? "ml-8 bg-sky-100 text-sky-900" : "mr-8 bg-slate-100 text-slate-800"}`}
+                      key={message.id}
+                    >
+                      {message.content}
+                    </div>
+                  ))}
+                  {isFileChatAskingByFileId[readerFile.id] ? (
+                    <div className="mr-8 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700">
+                      <span className="inline-flex items-center gap-1.5">
+                        AI is thinking
+                        <span className="inline-flex gap-1">
+                          <span className="size-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:-0.2s]" />
+                          <span className="size-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:-0.1s]" />
+                          <span className="size-1.5 animate-bounce rounded-full bg-slate-500" />
+                        </span>
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+                <form
+                  className="border-t border-slate-200 p-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleAskFileChat(readerFile.id);
+                  }}
+                >
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Ask a question about this file..."
+                      value={chatInputByFileId[readerFile.id] ?? ""}
+                      onChange={(event) =>
+                        setChatInputByFileId((previous) => ({ ...previous, [readerFile.id]: event.target.value }))
+                      }
+                      disabled={Boolean(isFileChatAskingByFileId[readerFile.id])}
+                    />
+                    <Button aria-label="Send message" type="submit" disabled={Boolean(isFileChatAskingByFileId[readerFile.id])}>
+                      {isFileChatAskingByFileId[readerFile.id] ? "Sending..." : <SendHorizontalIcon className="size-4" />}
+                    </Button>
+                  </div>
+                </form>
+              </section>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={isAnnouncementModalOpen}
