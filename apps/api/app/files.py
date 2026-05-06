@@ -8,15 +8,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.chat_service import (
-    CHAT_MODEL,
+    CHAT_IMAGE_MODEL,
     CHAT_PROVIDER,
+    CHAT_TEXT_MODEL,
     generate_chat_answer_from_image,
     generate_chat_answer_from_text,
 )
 from app.db import get_async_session
 from app.guards import require_classroom_membership
 from app.models import AIOutput, Announcement, Chat, ChatMessage, Classroom, ClassroomMembership, File, Quiz, QuizQuestion, User
-from app.quiz_service import QUIZ_MODEL, QUIZ_PROVIDER, generate_quiz_from_image, generate_quiz_from_text
+from app.quiz_service import QUIZ_IMAGE_MODEL, QUIZ_PROVIDER, QUIZ_TEXT_MODEL, generate_quiz_from_image, generate_quiz_from_text
 from app.schemas import (
     FileChatAskRequest,
     FileChatMessageResponse,
@@ -31,7 +32,7 @@ from app.schemas import (
     QuizQuestionResponse,
 )
 from app.storage import create_download_url
-from app.summary_service import SUMMARY_MODEL, SUMMARY_PROVIDER, generate_summary_from_image, generate_summary_from_text
+from app.summary_service import SUMMARY_IMAGE_MODEL, SUMMARY_PROVIDER, SUMMARY_TEXT_MODEL, generate_summary_from_image, generate_summary_from_text
 from app.users import current_active_user
 
 router = APIRouter(tags=["files"])
@@ -66,6 +67,18 @@ def _is_image_file(item: File) -> bool:
 
 def _is_supported_ai_file(item: File) -> bool:
     return _is_pdf_file(item) or _is_image_file(item)
+
+
+def _summary_model_for_file(item: File) -> str:
+    return SUMMARY_TEXT_MODEL if _is_pdf_file(item) else SUMMARY_IMAGE_MODEL
+
+
+def _quiz_model_for_file(item: File) -> str:
+    return QUIZ_TEXT_MODEL if _is_pdf_file(item) else QUIZ_IMAGE_MODEL
+
+
+def _chat_model_for_file(item: File) -> str:
+    return CHAT_TEXT_MODEL if _is_pdf_file(item) else CHAT_IMAGE_MODEL
 
 
 async def _get_file_announcement_context(file_id: UUID, db: AsyncSession) -> str | None:
@@ -233,7 +246,7 @@ async def generate_file_summary(
     summary.content = None
     summary.error_message = None
     summary.provider = SUMMARY_PROVIDER
-    summary.model = None
+    summary.model = _summary_model_for_file(item)
     await db.commit()
     await db.refresh(summary)
 
@@ -251,13 +264,13 @@ async def generate_file_summary(
         summary.content = content
         summary.error_message = None
         summary.provider = SUMMARY_PROVIDER
-        summary.model = SUMMARY_MODEL
+        summary.model = _summary_model_for_file(item)
     except Exception as error:
         summary.status = "failed"
         summary.content = None
         summary.error_message = str(error) or "Summary generation failed."
         summary.provider = SUMMARY_PROVIDER
-        summary.model = SUMMARY_MODEL
+        summary.model = _summary_model_for_file(item)
 
     await db.commit()
     await db.refresh(summary)
@@ -300,7 +313,13 @@ async def _get_quiz_questions(db: AsyncSession, quiz_id: UUID) -> list[QuizQuest
     return result.scalars().all()
 
 
-def _to_quiz_response(quiz: Quiz | None, file_id: UUID, questions: list[QuizQuestion] | None = None, error_message: str | None = None) -> FileQuizResponse:
+def _to_quiz_response(
+    quiz: Quiz | None,
+    file_id: UUID,
+    questions: list[QuizQuestion] | None = None,
+    error_message: str | None = None,
+    model: str | None = None,
+) -> FileQuizResponse:
     if quiz is None:
         return FileQuizResponse(state="empty", file_id=file_id)
     state = quiz.status if quiz.status in {"pending", "completed", "failed"} else "empty"
@@ -313,7 +332,7 @@ def _to_quiz_response(quiz: Quiz | None, file_id: UUID, questions: list[QuizQues
         questions=payload_questions,
         error_message=error_message if state == "failed" else None,
         provider=QUIZ_PROVIDER if state != "empty" else None,
-        model=QUIZ_MODEL if state != "empty" else None,
+        model=model if state != "empty" else None,
         updated_at=quiz.updated_at,
     )
 
@@ -331,7 +350,7 @@ async def get_file_quiz(
     if quiz is None:
         return _to_quiz_response(None, item.id)
     questions = await _get_quiz_questions(db, quiz.id) if quiz.status == "completed" else []
-    return _to_quiz_response(quiz, item.id, questions)
+    return _to_quiz_response(quiz, item.id, questions, model=_quiz_model_for_file(item))
 
 
 @router.post("/files/{file_id}/quiz", response_model=FileQuizResponse)
@@ -366,7 +385,7 @@ async def generate_file_quiz(
     existing_completed = await _get_latest_completed_quiz(db, item.id)
     if not payload.regenerate and existing_completed is not None:
         existing_questions = await _get_quiz_questions(db, existing_completed.id)
-        return _to_quiz_response(existing_completed, item.id, existing_questions)
+        return _to_quiz_response(existing_completed, item.id, existing_questions, model=_quiz_model_for_file(item))
 
     should_create_new_row = payload.regenerate and existing_completed is not None
     quiz = (None if should_create_new_row else existing) or Quiz(
@@ -415,13 +434,13 @@ async def generate_file_quiz(
         await db.commit()
         await db.refresh(quiz)
         questions = await _get_quiz_questions(db, quiz.id)
-        return _to_quiz_response(quiz, item.id, questions)
+        return _to_quiz_response(quiz, item.id, questions, model=_quiz_model_for_file(item))
     except Exception as error:
         quiz.status = "failed"
         await db.commit()
         await db.refresh(quiz)
         message = str(error) or "Quiz generation failed."
-        return _to_quiz_response(quiz, item.id, [], message)
+        return _to_quiz_response(quiz, item.id, [], message, model=_quiz_model_for_file(item))
 
 
 def _to_chat_message_response(message: ChatMessage) -> FileChatMessageResponse:
@@ -434,7 +453,13 @@ def _to_chat_message_response(message: ChatMessage) -> FileChatMessageResponse:
     )
 
 
-def _to_chat_response(chat: Chat | None, file_id: UUID, messages: list[ChatMessage] | None = None, error_message: str | None = None) -> FileChatResponse:
+def _to_chat_response(
+    chat: Chat | None,
+    file_id: UUID,
+    messages: list[ChatMessage] | None = None,
+    error_message: str | None = None,
+    model: str | None = None,
+) -> FileChatResponse:
     if chat is None:
         return FileChatResponse(state="empty", file_id=file_id)
     return FileChatResponse(
@@ -444,7 +469,7 @@ def _to_chat_response(chat: Chat | None, file_id: UUID, messages: list[ChatMessa
         messages=[_to_chat_message_response(message) for message in (messages or [])],
         error_message=error_message,
         provider=CHAT_PROVIDER,
-        model=CHAT_MODEL,
+        model=model,
         updated_at=chat.updated_at,
     )
 
@@ -486,7 +511,7 @@ async def get_file_chat(
     if chat is None:
         return _to_chat_response(None, item.id)
     messages = await _get_chat_messages(db, chat.id)
-    return _to_chat_response(chat, item.id, messages)
+    return _to_chat_response(chat, item.id, messages, model=_chat_model_for_file(item))
 
 
 @router.post("/files/{file_id}/chat", response_model=FileChatResponse)
@@ -549,14 +574,14 @@ async def ask_file_chat(
             role="assistant",
             content=answer,
             provider=CHAT_PROVIDER,
-            model=CHAT_MODEL,
+            model=_chat_model_for_file(item),
         )
         db.add(assistant_message)
         await db.commit()
         await db.refresh(chat)
         messages = await _get_chat_messages(db, chat.id)
-        return _to_chat_response(chat, item.id, messages)
+        return _to_chat_response(chat, item.id, messages, model=_chat_model_for_file(item))
     except Exception as error:
         await db.refresh(chat)
         messages = await _get_chat_messages(db, chat.id)
-        return _to_chat_response(chat, item.id, messages, str(error) or "Chat generation failed.")
+        return _to_chat_response(chat, item.id, messages, str(error) or "Chat generation failed.", _chat_model_for_file(item))

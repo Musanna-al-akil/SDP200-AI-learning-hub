@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import json
-import re
+from typing import Any
 
 from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.config import get_settings
 
 settings = get_settings()
 QUIZ_PROVIDER = "openrouter"
-QUIZ_MODEL = settings.openrouter_model
+QUIZ_TEXT_MODEL = settings.openrouter_text_model
+QUIZ_IMAGE_MODEL = settings.openrouter_image_model
 
 QUIZ_SYSTEM_PROMPT = (
     "You are an academic quiz generator. Generate multiple-choice quiz questions from the provided classroom material. "
-    "Return strict JSON only (no prose, no markdown)."
+    "Follow the provided schema exactly."
 )
 
 
@@ -21,16 +22,41 @@ class QuizGenerationError(ValueError):
     pass
 
 
-def _extract_json_payload(raw: str) -> str:
-    text = raw.strip()
-    if not text:
-        raise QuizGenerationError("Provider returned an empty quiz payload.")
+class QuizQuestionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\\s*", "", text)
-        text = re.sub(r"\\s*```$", "", text)
+    prompt: str = Field(min_length=1)
+    options: list[str] = Field(min_length=4, max_length=4)
+    correct_option_index: int = Field(ge=0, le=3)
+    explanation: str | None = None
 
-    return text.strip()
+
+class QuizOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    questions: list[QuizQuestionOutput] = Field(min_length=1)
+
+
+def _quiz_response_format() -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "quiz_output",
+            "strict": True,
+            "schema": QuizOutput.model_json_schema(),
+        },
+    }
+
+
+def _parse_structured_quiz_response(raw_content: str) -> QuizOutput:
+    if not raw_content.strip():
+        raise QuizGenerationError("Provider returned an empty structured quiz payload.")
+
+    try:
+        return QuizOutput.model_validate_json(raw_content)
+    except ValidationError as error:
+        raise QuizGenerationError("Provider returned invalid structured quiz output.") from error
 
 
 def _normalize_questions(data: object, question_count: int) -> list[dict[str, object]]:
@@ -87,31 +113,29 @@ def generate_quiz_from_text(extracted_text: str, question_count: int) -> tuple[s
         base_url="https://openrouter.ai/api/v1",
     )
     response = client.chat.completions.create(
-        model=QUIZ_MODEL,
+        model=QUIZ_TEXT_MODEL,
         messages=[
             {"role": "system", "content": QUIZ_SYSTEM_PROMPT},
             {
                 "role": "user",
                 "content": (
                     "Generate a quiz from this classroom material."
-                    f" Return JSON with shape: {{\"title\": string, \"questions\": [{{\"prompt\": string, \"options\": [string,string,string,string], \"correct_option_index\": 0-3, \"explanation\": string}}]}}."
-                    f" Generate {question_count} questions. Keep questions clear and classroom-appropriate.\n\n"
+                    f" Generate exactly {question_count} questions."
+                    " Keep questions clear and classroom-appropriate.\n\n"
                     f"Material:\n{extracted_text}"
                 ),
             },
         ],
         temperature=0.3,
+        response_format=_quiz_response_format(),
     )
 
-    raw_content = (response.choices[0].message.content or "").strip() if response.choices else ""
-    payload = _extract_json_payload(raw_content)
-    try:
-        parsed = json.loads(payload)
-    except json.JSONDecodeError as error:
-        raise QuizGenerationError("Provider returned invalid quiz JSON.") from error
+    raw_content = response.choices[0].message.content or "" if response.choices else ""
+    structured_output = _parse_structured_quiz_response(raw_content)
+    parsed = structured_output.model_dump(mode="python")
 
     questions = _normalize_questions(parsed, question_count)
-    title_value = parsed.get("title") if isinstance(parsed, dict) else None
+    title_value = structured_output.title
     title = title_value.strip() if isinstance(title_value, str) and title_value.strip() else "Generated Quiz"
 
     return title, questions
@@ -134,7 +158,7 @@ def generate_quiz_from_image(
         f"Announcement context: {announcement_body or 'N/A'}"
     )
     response = client.chat.completions.create(
-        model=QUIZ_MODEL,
+        model=QUIZ_IMAGE_MODEL,
         messages=[
             {"role": "system", "content": QUIZ_SYSTEM_PROMPT},
             {
@@ -144,8 +168,8 @@ def generate_quiz_from_image(
                         "type": "text",
                         "text": (
                             "Generate a quiz from this classroom image."
-                            f" Return JSON with shape: {{\"title\": string, \"questions\": [{{\"prompt\": string, \"options\": [string,string,string,string], \"correct_option_index\": 0-3, \"explanation\": string}}]}}."
-                            f" Generate {question_count} questions. Keep questions clear and classroom-appropriate.\n"
+                            f" Generate exactly {question_count} questions."
+                            " Keep questions clear and classroom-appropriate.\n"
                             "Use the image as the primary source and metadata only as supporting context.\n\n"
                             f"{metadata}"
                         ),
@@ -155,17 +179,15 @@ def generate_quiz_from_image(
             },
         ],
         temperature=0.3,
+        response_format=_quiz_response_format(),
     )
 
-    raw_content = (response.choices[0].message.content or "").strip() if response.choices else ""
-    payload = _extract_json_payload(raw_content)
-    try:
-        parsed = json.loads(payload)
-    except json.JSONDecodeError as error:
-        raise QuizGenerationError("Provider returned invalid quiz JSON.") from error
+    raw_content = response.choices[0].message.content or "" if response.choices else ""
+    structured_output = _parse_structured_quiz_response(raw_content)
+    parsed = structured_output.model_dump(mode="python")
 
     questions = _normalize_questions(parsed, question_count)
-    title_value = parsed.get("title") if isinstance(parsed, dict) else None
+    title_value = structured_output.title
     title = title_value.strip() if isinstance(title_value, str) and title_value.strip() else "Generated Quiz"
 
     return title, questions

@@ -6,7 +6,8 @@ from app.config import get_settings
 
 settings = get_settings()
 SUMMARY_PROVIDER = "openrouter"
-SUMMARY_MODEL = settings.openrouter_model
+SUMMARY_TEXT_MODEL = settings.openrouter_text_model
+SUMMARY_IMAGE_MODEL = settings.openrouter_image_model
 
 SYSTEM_PROMPT = (
     "You are an academic assistant. Write a concise plain-text summary of the provided classroom material. "
@@ -22,7 +23,7 @@ def generate_summary_from_text(extracted_text: str) -> str:
         base_url="https://openrouter.ai/api/v1",
     )
     response = client.chat.completions.create(
-        model=SUMMARY_MODEL,
+        model=SUMMARY_TEXT_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": extracted_text},
@@ -51,7 +52,7 @@ def generate_summary_from_image(
         f"Announcement context: {announcement_body or 'N/A'}"
     )
     response = client.chat.completions.create(
-        model=SUMMARY_MODEL,
+        model=SUMMARY_IMAGE_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {

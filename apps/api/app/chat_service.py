@@ -6,7 +6,8 @@ from app.config import get_settings
 
 settings = get_settings()
 CHAT_PROVIDER = "openrouter"
-CHAT_MODEL = settings.openrouter_model
+CHAT_TEXT_MODEL = settings.openrouter_text_model
+CHAT_IMAGE_MODEL = settings.openrouter_image_model
 
 CHAT_SYSTEM_PROMPT = (
     "You are a classroom study assistant. Answer using only the provided classroom material and context. "
@@ -41,7 +42,7 @@ def generate_chat_answer_from_text(
     messages.append({"role": "user", "content": f"{context}\n\nQuestion: {user_message}"})
 
     response = client.chat.completions.create(
-        model=CHAT_MODEL,
+        model=CHAT_TEXT_MODEL,
         messages=messages,
         temperature=0.25,
     )
@@ -88,7 +89,7 @@ def generate_chat_answer_from_image(
     )
 
     response = client.chat.completions.create(
-        model=CHAT_MODEL,
+        model=CHAT_IMAGE_MODEL,
         messages=messages,
         temperature=0.2,
     )

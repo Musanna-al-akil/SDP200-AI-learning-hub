@@ -1326,15 +1326,15 @@ export default function ClassroomDetailPage() {
           setReaderPreviewUrl(null);
         }}
       >
-        <DialogContent className="max-h-[92vh] w-[96vw] max-w-6xl! overflow-auto">
+        <DialogContent className="flex h-[92vh] w-[96vw] max-w-6xl! flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{readerFile?.title || readerFile?.filename || "Reader"}</DialogTitle>
             <DialogDescription>Study the file and ask questions from the material.</DialogDescription>
           </DialogHeader>
 
           {!readerFile ? null : (
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-              <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <section className="space-y-3 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">
                   {readerFile.content_type === "application/pdf" ? "PDF document" : "Image attachment"}
                 </p>
@@ -1373,12 +1373,12 @@ export default function ClassroomDetailPage() {
                 ) : null}
               </section>
 
-              <section className="flex min-h-[420px] flex-col rounded-lg border border-slate-200 bg-white">
+              <section className="flex h-full min-h-0 flex-col rounded-lg border border-slate-200 bg-white">
                 <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 text-sm font-medium text-slate-800">
                   <MessageSquareTextIcon className="size-4 text-violet-700" />
                   Document Chat
                 </div>
-                <div className="flex-1 space-y-2 overflow-auto px-3 py-3">
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-3">
                   {isFileChatLoadingByFileId[readerFile.id] ? (
                     <div className="space-y-2">
                       <Skeleton className="h-9 w-2/3 rounded-lg" />
@@ -1400,10 +1400,34 @@ export default function ClassroomDetailPage() {
                   ) : null}
                   {(fileChatByFileId[readerFile.id]?.messages ?? []).map((message) => (
                     <div
-                      className={`rounded-lg px-3 py-2 text-sm ${message.role === "user" ? "ml-8 bg-sky-100 text-sky-900" : "mr-8 bg-slate-100 text-slate-800"}`}
+                      className={`rounded-lg px-3 py-2 text-sm ${
+                        message.role === "user" ? "ml-8 bg-sky-100 text-sky-900" : "mr-8 bg-slate-100 text-slate-800"
+                      }`}
                       key={message.id}
                     >
-                      {message.content}
+                      {message.role === "assistant" ? (
+                        <div
+                          className="overflow-x-auto leading-6
+                          [&_a]:text-sky-700 [&_a]:underline
+                          [&_blockquote]:border-l-2 [&_blockquote]:border-slate-300 [&_blockquote]:pl-3 [&_blockquote]:text-slate-600
+                          [&_code]:rounded [&_code]:bg-slate-200/70 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs
+                          [&_h1]:mt-3 [&_h1]:text-base [&_h1]:font-semibold
+                          [&_h2]:mt-3 [&_h2]:text-sm [&_h2]:font-semibold
+                          [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold
+                          [&_li]:mb-1
+                          [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5
+                          [&_p]:mb-2
+                          [&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded [&_pre]:bg-slate-200/70 [&_pre]:p-2
+                          [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_table]:text-left
+                          [&_td]:border [&_td]:border-slate-300 [&_td]:px-2 [&_td]:py-1
+                          [&_th]:border [&_th]:border-slate-300 [&_th]:bg-slate-200/70 [&_th]:px-2 [&_th]:py-1 [&_th]:font-medium
+                          [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5"
+                        >
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      )}
                     </div>
                   ))}
                   {isFileChatAskingByFileId[readerFile.id] ? (

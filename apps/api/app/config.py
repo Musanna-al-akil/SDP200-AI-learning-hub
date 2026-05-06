@@ -49,7 +49,8 @@ class Settings:
     r2_bucket_name: str
     r2_public_base_url: str
     openrouter_api_key: str
-    openrouter_model: str
+    openrouter_text_model: str
+    openrouter_image_model: str
     jwt_secret_key: str
     session_secret_key: str
     cors_origins: list[str]
@@ -71,7 +72,8 @@ def get_settings() -> Settings:
         r2_bucket_name=_env("R2_BUCKET_NAME"),
         r2_public_base_url=_env("R2_PUBLIC_BASE_URL"),
         openrouter_api_key=_env("OPENROUTER_API_KEY"),
-        openrouter_model=_env("OPENROUTER_MODEL"),
+        openrouter_text_model=_env("OPENROUTER_TEXT_MODEL"),
+        openrouter_image_model=_env("OPENROUTER_IMAGE_MODEL"),
         jwt_secret_key=_env("JWT_SECRET_KEY"),
         session_secret_key=_env("SESSION_SECRET_KEY"),
         cors_origins=_parse_origins(_env("CORS_ORIGIN")),
