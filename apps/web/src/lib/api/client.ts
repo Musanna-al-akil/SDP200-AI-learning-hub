@@ -351,6 +351,10 @@ export const apiClient = {
       body: formData,
     });
   },
+  deleteClassroomAnnouncement: (classroomId: string, announcementId: string) =>
+    requestJson<{ success: boolean }>(`/classrooms/${classroomId}/announcements/${announcementId}`, {
+      method: "DELETE",
+    }),
   getFile: (fileId: string) => requestJson<ClassroomFile>(`/files/${fileId}`),
   getFileDownloadUrl: (fileId: string) => requestJson<{ url: string }>(`/files/${fileId}/download`),
   getFileSummary: (fileId: string) => requestJson<FileSummary>(`/files/${fileId}/summary`),

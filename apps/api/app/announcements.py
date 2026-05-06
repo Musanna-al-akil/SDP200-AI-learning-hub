@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 from urllib.parse import urlparse
 from uuid import UUID
@@ -108,7 +109,11 @@ async def list_classroom_announcements(
             select(Announcement, User.name)
             .join(User, User.id == Announcement.created_by_id)
             .join(Classroom, Classroom.id == Announcement.classroom_id)
-            .where(Announcement.classroom_id == classroom_id, Classroom.archived_at.is_(None))
+            .where(
+                Announcement.classroom_id == classroom_id,
+                Announcement.deleted_at.is_(None),
+                Classroom.archived_at.is_(None),
+            )
             .order_by(Announcement.created_at.desc())
         )
     ).all()
@@ -253,3 +258,28 @@ async def create_classroom_announcement(
             background_tasks.add_task(process_pdf_file, created_file.id, file_bytes)
 
     return _to_announcement_response(announcement, user.name, created_file)
+
+
+@router.delete("/classrooms/{classroom_id}/announcements/{announcement_id}")
+async def delete_classroom_announcement(
+    classroom_id: UUID,
+    announcement_id: UUID,
+    db: db_dependency,
+    _: str = Depends(require_creator),
+) -> dict[str, bool]:
+    announcement = await db.scalar(
+        select(Announcement)
+        .join(Classroom, Classroom.id == Announcement.classroom_id)
+        .where(
+            Announcement.id == announcement_id,
+            Announcement.classroom_id == classroom_id,
+            Announcement.deleted_at.is_(None),
+            Classroom.archived_at.is_(None),
+        )
+    )
+    if announcement is None:
+        raise _error(status.HTTP_404_NOT_FOUND, "not_found", "Announcement not found.")
+
+    announcement.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"success": True}

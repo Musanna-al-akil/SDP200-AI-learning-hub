@@ -14,11 +14,13 @@ import {
   Loader2Icon,
   MegaphoneIcon,
   MessageSquareTextIcon,
+  MoreHorizontalIcon,
   PaperclipIcon,
   PlayCircleIcon,
   PlusIcon,
   SendHorizontalIcon,
   SparklesIcon,
+  Trash2Icon,
   UsersIcon,
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
@@ -36,6 +38,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/shadcn/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/shadcn/ui/dropdown-menu";
 import { Input } from "@/components/shadcn/ui/input";
 import { Skeleton } from "@/components/shadcn/ui/skeleton";
 import { Textarea } from "@/components/shadcn/ui/textarea";
@@ -220,6 +228,8 @@ export default function ClassroomDetailPage() {
   const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
   const [isArchivingClassroom, setIsArchivingClassroom] = useState(false);
   const [isPostingAnnouncement, setIsPostingAnnouncement] = useState(false);
+  const [deleteTargetAnnouncementId, setDeleteTargetAnnouncementId] = useState<string | null>(null);
+  const [deletingAnnouncementId, setDeletingAnnouncementId] = useState<string | null>(null);
   const [summaryByFileId, setSummaryByFileId] = useState<Record<string, FileSummary>>({});
   const [isSummaryLoadingByFileId, setIsSummaryLoadingByFileId] = useState<Record<string, boolean>>({});
   const [isSummaryGeneratingByFileId, setIsSummaryGeneratingByFileId] = useState<Record<string, boolean>>({});
@@ -712,6 +722,28 @@ export default function ClassroomDetailPage() {
     }
   };
 
+  const handleConfirmDeleteAnnouncement = async () => {
+    if (!deleteTargetAnnouncementId) {
+      return;
+    }
+    if (!isCreator || !classroom) {
+      return;
+    }
+
+    setDeletingAnnouncementId(deleteTargetAnnouncementId);
+    try {
+      await apiClient.deleteClassroomAnnouncement(classroom.id, deleteTargetAnnouncementId);
+      setAnnouncements((previous) => previous.filter((announcement) => announcement.id !== deleteTargetAnnouncementId));
+      toast.success("Announcement deleted");
+      setDeleteTargetAnnouncementId(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not delete announcement";
+      toast.error(message);
+    } finally {
+      setDeletingAnnouncementId((current) => (current === deleteTargetAnnouncementId ? null : current));
+    }
+  };
+
   const handleCopyClassCode = async () => {
     if (!classroom?.join_code) {
       return;
@@ -882,20 +914,48 @@ export default function ClassroomDetailPage() {
                             <span className="text-xs text-slate-500">{formatPostedAt(announcement.created_at)}</span>
                           </div>
                         </div>
-                        {summaryFileId && announcement.attachment?.type === "file" && announcement.attachment.file ? (
-                          <Button
-                            size="sm"
-                            type="button"
-                            className="h-8 shrink-0 gap-1.5 rounded-full border border-fuchsia-200 bg-gradient-to-r from-fuchsia-50 to-rose-100 px-3 text-fuchsia-900 shadow-sm hover:from-fuchsia-100 hover:to-rose-200 hover:cursor-pointer"
-                            variant="ghost"
-                            onClick={() => {
-                              void handleOpenReaderChat(announcement.attachment);
-                            }}
-                          >
-                            <MessageSquareTextIcon className="size-3.5" />
-                            Chat With Resource
-                          </Button>
-                        ) : null}
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                          {summaryFileId && announcement.attachment?.type === "file" && announcement.attachment.file ? (
+                            <Button
+                              size="sm"
+                              type="button"
+                              className="h-8 gap-1.5 rounded-full border border-fuchsia-200 bg-gradient-to-r from-fuchsia-50 to-rose-100 px-3 text-fuchsia-900 shadow-sm hover:from-fuchsia-100 hover:to-rose-200 hover:cursor-pointer"
+                              variant="ghost"
+                              onClick={() => {
+                                void handleOpenReaderChat(announcement.attachment);
+                              }}
+                            >
+                              <MessageSquareTextIcon className="size-3.5" />
+                              Chat With Resource
+                            </Button>
+                          ) : null}
+                          {isCreator ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="icon"
+                                  type="button"
+                                  variant="ghost"
+                                  className="size-8 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                                  disabled={deletingAnnouncementId === announcement.id}
+                                  aria-label="Announcement actions"
+                                >
+                                  <MoreHorizontalIcon className="size-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-40">
+                                <DropdownMenuItem
+                                  className="text-rose-700 focus:text-rose-700"
+                                  onSelect={() => setDeleteTargetAnnouncementId(announcement.id)}
+                                  disabled={deletingAnnouncementId === announcement.id}
+                                >
+                                  <Trash2Icon className="mr-2 size-3.5" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : null}
+                        </div>
                       </div>
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{announcement.body}</p>
 
@@ -1281,6 +1341,47 @@ export default function ClassroomDetailPage() {
             : null}
         </section>
       </div>
+
+      <Dialog
+        open={Boolean(deleteTargetAnnouncementId)}
+        onOpenChange={(open) => {
+          if (deletingAnnouncementId) {
+            return;
+          }
+          if (!open) {
+            setDeleteTargetAnnouncementId(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete announcement?</DialogTitle>
+            <DialogDescription>
+              This announcement will be removed from the class stream for everyone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={Boolean(deletingAnnouncementId)}
+              onClick={() => setDeleteTargetAnnouncementId(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={Boolean(deletingAnnouncementId)}
+              onClick={() => {
+                void handleConfirmDeleteAnnouncement();
+              }}
+            >
+              {deletingAnnouncementId ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={isArchiveConfirmOpen}

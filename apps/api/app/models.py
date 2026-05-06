@@ -76,6 +76,7 @@ class Announcement(TimestampMixin, Base):
     file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("files.id"), nullable=True, index=True)
     link_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     youtube_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AIOutput(TimestampMixin, Base):
